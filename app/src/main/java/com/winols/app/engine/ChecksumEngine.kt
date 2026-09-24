@@ -1,29 +1,39 @@
 package com.winols.app.engine
 
 import com.winols.app.data.BinaryBufferManager
-import java.util.zip.CRC32
+import com.winols.app.model.DataType
 
 class ChecksumEngine(private val bufferManager: BinaryBufferManager) {
 
-    fun calculateSimpleSum16(startAddress: Int, length: Int): Int {
-        val bytes = bufferManager.readBlock(startAddress, length)
+    fun calculateSimple16BitSum(startAddress: Int, endAddress: Int): Int {
         var sum = 0
-        for (i in 0 until length - 1 step 2) {
-            val high = bytes[i].toInt() and 0xFF
-            val low = bytes[i + 1].toInt() and 0xFF
-            sum = (sum + ((high shl 8) or low)) and 0xFFFF
+        var addr = startAddress
+        while (addr + 1 <= endAddress && addr + 1 < bufferManager.size) {
+            val word = bufferManager.readValue(addr, DataType.UWORD_LE).toInt()
+            sum = (sum + word) and 0xFFFF
+            addr += 2
         }
         return sum
     }
 
-    fun calculateCRC32(startAddress: Int, length: Int): Long {
-        val bytes = bufferManager.readBlock(startAddress, length)
-        val crc = CRC32()
-        crc.update(bytes)
-        return crc.value
+    fun verifyChecksum16Bit(startAddress: Int, endAddress: Int, checksumAddress: Int): Boolean {
+        val calculated = calculateSimple16BitSum(startAddress, endAddress)
+        val stored = bufferManager.readValue(checksumAddress, DataType.UWORD_LE).toInt()
+        return calculated == stored
     }
 
-    fun verifyChecksum(startAddress: Int, length: Int, expectedCrc: Long): Boolean {
-        return calculateCRC32(startAddress, length) == expectedCrc
+    fun updateChecksum16Bit(startAddress: Int, endAddress: Int, checksumAddress: Int) {
+        val calculated = calculateSimple16BitSum(startAddress, endAddress)
+        bufferManager.writeValue(checksumAddress, DataType.UWORD_LE, calculated.toDouble())
+    }
+
+    fun calculateCrc32(startAddress: Int, length: Int): Long {
+        val crc = java.util.zip.CRC32()
+        val raw = bufferManager.getRawBytes()
+        val safeLen = length.coerceAtMost(raw.size - startAddress)
+        if (safeLen > 0 && startAddress >= 0) {
+            crc.update(raw, startAddress, safeLen)
+        }
+        return crc.value
     }
 }

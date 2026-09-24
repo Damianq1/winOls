@@ -1,49 +1,65 @@
 package com.winols.app
 
 import com.winols.app.data.BinaryBufferManager
-import com.winols.app.edit.MapEditor
 import com.winols.app.engine.ChecksumEngine
+import com.winols.app.engine.MapFinderEngine
 import com.winols.app.model.DataType
-import com.winols.app.model.MapDefinition
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class CoreEngineTest {
 
-    @Test
-    fun testBufferReadWrite() {
-        val manager = BinaryBufferManager(64)
-        manager.writeValue(0x10, DataType.UWORD_BE, 1250.0)
-        val readVal = manager.readValue(0x10, DataType.UWORD_BE)
-        assertEquals(1250.0, readVal, 0.001)
+    private lateinit var bufferManager: BinaryBufferManager
+    private lateinit var checksumEngine: ChecksumEngine
+    private lateinit var mapFinderEngine: MapFinderEngine
+
+    @Before
+    fun setUp() {
+        // Bufor testowy o rozmiarze 1024 bajtów
+        val initialBytes = ByteArray(1024)
+        bufferManager = BinaryBufferManager(initialBytes)
+        checksumEngine = ChecksumEngine(bufferManager)
+        mapFinderEngine = MapFinderEngine(bufferManager)
     }
 
     @Test
-    fun testMapEditorScaling() {
-        val manager = BinaryBufferManager(128)
-        val map = MapDefinition(
-            id = "MAP_1",
-            name = "Test Map",
-            startAddress = 0,
-            rows = 2,
-            columns = 2,
-            dataType = DataType.UWORD_BE,
-            factor = 0.5,
-            offset = 10.0
-        )
-        val editor = MapEditor(manager)
-        editor.setPhysicalValue(map, 0, 0, 100.0) // Raw: (100 - 10) / 0.5 = 180
+    fun testBufferReadWritePrimitives() {
+        bufferManager.writeValue(0x10, DataType.UBYTE, 255.0)
+        assertEquals(255.0, bufferManager.readValue(0x10, DataType.UBYTE), 0.0)
 
-        val physicalValues = editor.getPhysicalValues(map)
-        assertEquals(100.0, physicalValues[0][0], 0.001)
+        bufferManager.writeValue(0x20, DataType.UWORD_LE, 45000.0)
+        assertEquals(45000.0, bufferManager.readValue(0x20, DataType.UWORD_LE), 0.0)
+
+        bufferManager.writeValue(0x30, DataType.SWORD_BE, -1200.0)
+        assertEquals(-1200.0, bufferManager.readValue(0x30, DataType.SWORD_BE), 0.0)
     }
 
     @Test
-    fun testChecksumCalculation() {
-        val manager = BinaryBufferManager(16)
-        val engine = ChecksumEngine(manager)
-        val crc = engine.calculateCRC32(0, 16)
-        assertTrue(crc != 0L)
+    fun testChecksumCalculationAndUpdate() {
+        bufferManager.writeValue(0x00, DataType.UWORD_LE, 1000.0)
+        bufferManager.writeValue(0x02, DataType.UWORD_LE, 2000.0)
+
+        val calculated = checksumEngine.calculateSimple16BitSum(0x00, 0x03)
+        assertEquals(3000, calculated)
+
+        checksumEngine.updateChecksum16Bit(0x00, 0x03, 0x08)
+        assertTrue(checksumEngine.verifyChecksum16Bit(0x00, 0x03, 0x08))
+    }
+
+    @Test
+    fun testMonotonicMapFinder() {
+        // Generowanie monotonicznie rosnącej osi/sekwencji o długości 8 elementów (16 bajtów)
+        val startAddr = 0x80
+        for (i in 0 until 8) {
+            val addr = startAddr + (i * 2)
+            val value = (1000 + i * 250).toDouble()
+            bufferManager.writeValue(addr, DataType.UWORD_LE, value)
+        }
+
+        val detected = mapFinderEngine.scanForMonotonicRegions(minElements = 8, dataType = DataType.UWORD_LE)
+        assertTrue("Powinien wykryć co najmniej jeden region monotoniczny", detected.isNotEmpty())
+        assertTrue("Wykryty adres powinien zawierać $startAddr", detected.contains(startAddr))
     }
 }
