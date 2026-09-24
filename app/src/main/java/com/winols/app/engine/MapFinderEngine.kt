@@ -1,69 +1,61 @@
 package com.winols.app.engine
 
-import com.winols.app.model.AxisDefinition
-import com.winols.app.model.DataType
+import com.winols.app.data.BinaryBufferManager
 import com.winols.app.model.MapDefinition
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 
-class MapFinderEngine {
+class MapFinderEngine(private val bufferManager: BinaryBufferManager) {
 
-    /**
-     * Wyszukuje charakterystyczne nagłówki osi (np. Bosch 16-bit: identyfikator osi, długość, punkty pracy).
-     */
-    fun scanForPotentialMaps(buffer: ByteArray, minRows: Int = 4, maxRows: Int = 32, minCols: Int = 4, maxCols: Int = 32): List<MapDefinition> {
-        val detectedMaps = mutableListOf<MapDefinition>()
-        val maxOffset = buffer.size - 64
+    suspend fun scanForPotentialMaps(
+        minRows: Int = 4,
+        maxRows: Int = 32,
+        minCols: Int = 4,
+        maxCols: Int = 32,
+        onProgress: ((progressPercent: Int) -> Unit)? = null
+    ): List<MapDefinition> = withContext(Dispatchers.Default) {
+        val totalSize = bufferManager.size.toInt()
+        if (totalSize <= 0) return@withContext emptyList()
 
-        var i = 0
-        while (i < maxOffset) {
-            val rows = buffer[i].toInt() and 0xFF
-            val cols = buffer[i + 1].toInt() and 0xFF
+        val foundMaps = mutableListOf<MapDefinition>()
+        val step = 16
+        val totalSteps = totalSize / step
 
-            if (rows in minRows..maxRows && cols in minCols..maxCols) {
-                val dataSize = rows * cols * 2
-                val mapStart = i + 2
+        for (i in 0 until totalSteps) {
+            ensureActive()
 
-                if (mapStart + dataSize <= buffer.size && isDataPlausible(buffer, mapStart, rows, cols)) {
-                    val mapDef = MapDefinition(
-                        id = "MAP_${Integer.toHexString(mapStart).uppercase()}",
-                        name = "Potential Map ${rows}x${cols} @ 0x${Integer.toHexString(mapStart).uppercase()}",
-                        startAddress = mapStart.toLong(),
-                        rows = rows,
-                        columns = cols,
-                        dataType = DataType.UWORD_LE,
-                        xAxis = AxisDefinition("X-Axis", length = cols),
-                        yAxis = AxisDefinition("Y-Axis", length = rows)
+            val offset = i * step
+            if (offset + (maxRows * maxCols * 2) > totalSize) break
+
+            if (isPlausibleMapHeader(offset)) {
+                val detectedRows = 16
+                val detectedCols = 16
+                foundMaps.add(
+                    MapDefinition(
+                        name = "Detected_Map_0x${offset.toString(16).uppercase()}",
+                        startAddress = offset,
+                        rows = detectedRows,
+                        columns = detectedCols,
+                        is16Bit = true,
+                        isSigned = false
                     )
-                    detectedMaps.add(mapDef)
-                    i += dataSize
-                }
+                )
             }
-            i += 2
+
+            if (i % 256 == 0 && onProgress != null) {
+                val progress = ((i.toFloat() / totalSteps) * 100).toInt()
+                onProgress(progress)
+            }
         }
-        return detectedMaps
+
+        onProgress?.invoke(100)
+        foundMaps
     }
 
-    private fun isDataPlausible(buffer: ByteArray, start: Int, rows: Int, cols: Int): Boolean {
-        var nonZeroCount = 0
-        var monotonicTrends = 0
-        val totalElements = rows * cols
-        var previousVal = -1
-
-        val bb = ByteBuffer.wrap(buffer, start, totalElements * 2).order(ByteOrder.LITTLE_ENDIAN)
-
-        for (idx in 0 until totalElements) {
-            val value = bb.short.toInt() and 0xFFFF
-            if (value > 0) nonZeroCount++
-            if (previousVal != -1 && value >= previousVal) {
-                monotonicTrends++
-            }
-            previousVal = value
-        }
-
-        val nonZeroRatio = nonZeroCount.toDouble() / totalElements
-        val monotonicRatio = monotonicTrends.toDouble() / totalElements
-
-        return nonZeroRatio > 0.40 && (monotonicRatio > 0.35 || nonZeroRatio > 0.85)
+    private suspend fun isPlausibleMapHeader(offset: Int): Boolean = withContext(Dispatchers.Default) {
+        val sample = bufferManager.getBytes(offset, 8)
+        val nonZeroCount = sample.count { it.toInt() != 0 }
+        nonZeroCount in 2..6
     }
 }
