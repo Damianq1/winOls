@@ -1,0 +1,4 @@
+{
+  "plugin": "org.smartide.plugin.git",
+  "run": "echo 'change command from .si.json file'"
+}

@@ -1,0 +1,52 @@
+PROMPT ARCHITEKTONICZNY / SPECYFIKACJA PROJEKTU
+Projekt: Mobilny Edytor Map ECU (Android)
+Pakiet główny: com.winols.app
+Język: Kotlin (pełna interoperacyjność z istniejącym kodem w Java)
+Główny cel: Stworzenie mobilnego odpowiednika programów WinOLS / ECM Titanium / TunerPro do analizy, podglądu i edycji plików binarnych Flash/EEPROM ze sterowników ECU.
+
+---
+1. WYMAGANIA TECHNICZNE I ARCHITEKTURA
+- UI: ViewBinding, własne skustomizowane widoki (Custom Views) dla wykresów 2D/3D i tabel.
+- Wydajność: Wszelkie operacje I/O, skanowanie pamięci i przeliczania binarne MUSZĄ wykonywać się asynchronicznie (Kotlin Coroutines / Dispatchers.Default / IO), aby nie blokować głównego wątku UI.
+- Pamięć: Praca na dużych plikach binarnych (512 KB – 8 MB) z użyciem bezpośrednich buforów pamięci (java.nio.ByteBuffer) oraz pamięci podręcznej (caching).
+
+---
+2. KLUCZOWE MODUŁY I FUNKCJONALNOŚCI
+[A] Obsługa plików binarnych (.bin / .hex)
+- Wysoko wydajny odczyt i zapis z użyciem ByteBuffer.
+- Szybkie przełączanie reprezentacji danych: HEX (8/16-bit, Signed/Unsigned, Hi/Lo), Wykres 2D, Tabela 3D.
+
+[B] Wyszukiwanie i definicja map (MapFinderEngine & MapDefinition)
+- Algorytm automatycznego wykrywania potencjalnych map (nagłówki, osie X/Y).
+- Przeliczanie RAW -> Fizyczne (Factor/Offset).
+
+[C] Podgląd i edycja danych
+- Widok tabelaryczny (Grid View) z operacjami masowymi (+/-, %, stała, wygładzanie).
+- Interaktywny podgląd 2D/3D.
+
+[D] Sumy kontrolne i Eksport (ExcelExporter & ChecksumEngine)
+- Eksport do XLS / CSV.
+- Weryfikacja i przeliczanie Checksum przed zapisem.
+
+
+Główny cel:
+Tworzymy potężny, ale mobilny edytor map z plików binarnych ECU (sterowników silnika), łączący kluczowe funkcje programów WinOLS, ECM Titanium i TunerPro na platformie Android. Aplikacja ma służyć do podglądu, analizy, przeliczania wartości oraz edycji wsadowej pamięci Flash/EEPROM.
+Kluczowe moduły i funkcjonalności:
+Wczytywanie i obsługa plików .bin / .hex:
+Wysoka wydajność odczytu/zapisu dużych plików binarnych (od 512 KB do 8 MB) z użyciem bezpośredniego bufora pamięci (ByteBuffer).
+Szybkie przełączanie reprezentacji danych: HEX (16-bit / 8-bit, Signed/Unsigned, Hi/Lo byte order), grafika 2D (wykres fali) oraz tabele 3D.
+Wyszukiwanie i definicja map (MapFinderEngine & MapDefinition):
+Automatyczny algorytm rozpoznawania potencjalnych map (charakterystyczne osie X/Y, osie tekstowe, bloki danych).
+Przeliczanie surowych wartości na fizyczne jednostki za pomocą wzorów przeliczeniowych (Factor/Offset, np. x \times 0.01, x \times 0.25 - 40).
+Podgląd i edycja danych:
+Widok tabelaryczny z opcją masowej edycji (dodawanie/odejmowanie wartości, zmiana procentowa, wygładzanie, wklejanie stałej wartości).
+Podgląd 2D i dynamiczny wykres 3D dla wybranych map.
+Narzędzia i eksport (ExcelExporter):
+Eksport zdefiniowanych map oraz zmienionych zmiennych do arkusza XLS/CSV.
+Narzędzie do automatycznego przeliczania i weryfikacji sum kontrolnych (Checksums).
+Wymagania techniczne i architektura kodu:
+Język: Kotlin (z zachowaniem kompatybilności z istniejącymi klasami w Javie, takimi jak MapDefinition czy MapFinderEngine).
+UI: ViewBinding, zaawansowane skustomizowane widoki dla wykresów 2D/tabel.
+Wydajność: Przeliczania binarne, operacje na plikach i skanowanie pamięci muszą odbywać się asynchronicznie (Coroutines / ThreadPool), aby nie blokować głównego wątku UI.
+Struktura pakietów: Główny pakiet to com.winols.app.
+Trzymajmy się tej architektury we wszystkich kolejnych propozycjach poprawek i rozbudowy kodu!

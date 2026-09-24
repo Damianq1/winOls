@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">WinOLS Mobile</string>
+    <string name="checksum_failed">Weryfikacja sumy kontrolnej nie powiodła się</string>
+    <string name="checksum_success">Suma kontrolna poprawna</string>
+</resources>

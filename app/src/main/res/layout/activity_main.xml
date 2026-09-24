@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="6dp">
+    <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content"><LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
+        <Button android:id="@+id/btnOpenFile" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Otwórz BIN/HEX"/>
+        <Button android:id="@+id/btnAutoScan" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Skanuj mapy"/>
+        <Button android:id="@+id/btnExportExcel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="XLSX"/>
+        <Button android:id="@+id/btnExportCsv" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="CSV"/>
+        <Button android:id="@+id/btnSaveBIN" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Zapisz"/>
+        <Button android:id="@+id/btnChecksum" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Checksum"/>
+    </LinearLayout></HorizontalScrollView>
+    <TextView android:id="@+id/txtStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Brak pliku" android:padding="4dp"/>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="horizontal">
+        <ListView android:id="@+id/listMaps" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="0.8"/>
+        <LinearLayout android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="2" android:orientation="vertical" android:paddingStart="6dp">
+            <TextView android:id="@+id/txtMapTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Wybierz mapę" android:textStyle="bold"/>
+            <com.winols.app.ui.views.HexGridView android:id="@+id/hexGridView" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+            <com.winols.app.ui.views.MapGridView android:id="@+id/mapGridView" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+            <com.winols.app.ui.views.Wave2DView android:id="@+id/wave2DView" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+            <com.winols.app.ui.views.Surface3DView android:id="@+id/surface3DView" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <EditText android:id="@+id/editAmount" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:hint="Wartość / %" android:inputType="numberDecimal|numberSigned"/>
+                <Button android:id="@+id/btnAdd" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="+"/>
+                <Button android:id="@+id/btnSub" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="−"/>
+                <Button android:id="@+id/btnPercent" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="%"/>
+                <Button android:id="@+id/btnSet" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="="/>
+                <Button android:id="@+id/btnSmooth" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Smooth"/>
+                <Button android:id="@+id/btnUndo" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Undo"/>
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
