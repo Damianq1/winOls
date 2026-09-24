@@ -15,13 +15,10 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.live import Live
 
-from project_tracker import ProjectTracker
-
 PROJECT_DIR = Path("/storage/emulated/0/Rozne/WinOls")
 GITHUB_REPO_API = "https://api.github.com/repos/Damianq1/winOls/actions/runs?per_page=1"
 
 console = Console(force_terminal=True)
-tracker = ProjectTracker()
 
 logger.remove()
 logger.add(sys.stderr, level="ERROR", format="{time:HH:mm:ss} | <level>{level}</level> | {message}")
@@ -30,17 +27,14 @@ def ensure_valid_cwd():
     try:
         if not PROJECT_DIR.exists():
             PROJECT_DIR.mkdir(parents=True, exist_ok=True)
-        os.chdir(PROJECT_DIR)
+        os.chdir(str(PROJECT_DIR))
     except Exception:
         try:
             subprocess.run(["termux-setup-storage"], capture_output=True, timeout=2)
-        except Exception:
-            pass
-        try:
             PROJECT_DIR.mkdir(parents=True, exist_ok=True)
-            os.chdir(PROJECT_DIR)
+            os.chdir(str(PROJECT_DIR))
         except Exception as e:
-            console.print(f"[bold red][!] Błąd uprawnień katalogu: {e}[/bold red]")
+            console.print(f"[bold red][!] Błąd uprawnień/katalogu: {e}[/bold red]")
 
 def load_env_vars():
     ensure_valid_cwd()
@@ -62,7 +56,7 @@ def build_dynamic_project_context() -> str:
     ensure_valid_cwd()
     file_list = []
     
-    for root, dirs, files in os.walk(PROJECT_DIR):
+    for root, dirs, files in os.walk(str(PROJECT_DIR)):
         dirs[:] = [d for d in dirs if d not in ['.git', 'build', '.idea', '.gradle', 'app/build']]
         for f in files:
             file_path = Path(root) / f
@@ -75,7 +69,7 @@ def build_dynamic_project_context() -> str:
     context_builder = [
         "[PROFIL I INSTRUKCJA SYSTEMOWA]",
         "Jesteś zaawansowanym asystentem skryptowym i programistycznym w środowisku SmartIDE.",
-        "Zapewniaj kompletny, gotowy kod źródłowy i wsparcie techniczne.",
+        "Twórz kompletny kod gotowy do wdrożenia.",
         "\n[STRUKTURA PROJEKTU]"
     ]
     
@@ -83,7 +77,7 @@ def build_dynamic_project_context() -> str:
     for f in sorted(file_list)[:30]:
         context_builder.append(f" - {f}")
 
-    context_builder.append("\n[ZASADA] Zwracaj zmodyfikowane lub nowe pliki w formacie: ### ścieżka/do/Pliku\n```kotlin\n...\n```")
+    context_builder.append("\n[ZASADA] Zwracaj zmodyfikowane pliki w formacie: ### ścieżka/do/Pliku\n```kotlin\n...\n```")
     return "\n".join(context_builder)
 
 def parse_multi_file_code(response_text: str) -> list:
@@ -118,30 +112,6 @@ def apply_file_changes(parsed_files):
             f.write(content)
         console.print(f"[bold green][+] Zaktualizowano lokalnie: {clean_path}[/bold green]")
 
-def fetch_failed_log(logs_url: str) -> str:
-    try:
-        headers = {"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
-        if GITHUB_TOKEN:
-            headers["Authorization"] = f"token {GITHUB_TOKEN}"
-        req = urllib.request.Request(logs_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            jobs_url = data.get("jobs_url")
-            if jobs_url:
-                req_jobs = urllib.request.Request(jobs_url, headers=headers)
-                with urllib.request.urlopen(req_jobs, timeout=10) as j_resp:
-                    j_data = json.loads(j_resp.read().decode())
-                    for job in j_data.get("jobs", []):
-                        if job.get("conclusion") == "failure":
-                            steps_summary = []
-                            for step in job.get("steps", []):
-                                if step.get("conclusion") == "failure":
-                                    steps_summary.append(f"Krok nieudany: {step.get('name')}")
-                            return "\n".join(steps_summary) or "Wykryto błąd budowania w jobie Actions."
-    except Exception:
-        pass
-    return "Nie udało się automatycznie pobrać szczegółów logów błędu."
-
 async def wait_for_github_actions() -> tuple[str, str]:
     start_time = time.time()
     headers = {"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
@@ -174,12 +144,12 @@ async def git_sync_and_monitor(client) -> tuple[bool, str]:
     ensure_valid_cwd()
     console.print("\n[bold cyan][*] Synchronizacja zmian z GitHubem...[/bold cyan]")
     try:
-        subprocess.run(["git", "-C", str(PROJECT_DIR), "add", "."], capture_output=True, text=True, check=True)
+        subprocess.run(["git", "add", "."], capture_output=True, text=True, check=True, cwd=str(PROJECT_DIR))
         
-        status_res = subprocess.run(["git", "-C", str(PROJECT_DIR), "status", "--porcelain"], capture_output=True, text=True)
+        status_res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=str(PROJECT_DIR))
         if status_res.stdout.strip():
-            subprocess.run(["git", "-C", str(PROJECT_DIR), "commit", "-m", "Auto-update via Gemini Assistant"], capture_output=True, text=True, check=True)
-            push_res = subprocess.run(["git", "-C", str(PROJECT_DIR), "push"], capture_output=True, text=True)
+            subprocess.run(["git", "commit", "-m", "Auto-update via Gemini Assistant"], capture_output=True, text=True, check=True, cwd=str(PROJECT_DIR))
+            push_res = subprocess.run(["git", "push"], capture_output=True, text=True, cwd=str(PROJECT_DIR))
             if push_res.returncode == 0:
                 console.print("[bold green][ok] Pomyślnie wypchnięto zmiany do GitHub.[/bold green]")
             else:
@@ -196,13 +166,9 @@ async def git_sync_and_monitor(client) -> tuple[bool, str]:
             return True, ""
         else:
             console.print("[bold red][!] GitHub Actions -> Budowanie ZAKOŃCZONE BŁĘDEM (failure)![/bold red]")
-            console.print("[bold yellow][*] Pobieranie informacji o błędzie i generowanie poprawki...[/bold yellow]")
-            
-            error_details = fetch_failed_log(run_url)
             prompt_fix = (
                 f"[AUTOMATYCZNE ZGŁOSZENIE BŁĘDU GITHUB ACTIONS]\n"
                 f"Ostatnia zmiana wywołała błąd w GitHub Actions (status: failure).\n"
-                f"Podsumowanie błędów: {error_details}\n\n"
                 f"Przeanalizuj zmiany, znajdź przyczynę błędu i podaj poprawione pliki."
             )
             return False, prompt_fix
@@ -218,7 +184,6 @@ async def send_prompt_with_spinner(client, prompt_text: str):
 
     async def send_task():
         nonlocal response_text, success
-        # Użycie świeżej sesji czatu zapobiega przepełnieniu tokenów/błędom 405
         chat = client.start_chat()
         response = await chat.send_message(prompt_text)
         response_text = response.text if hasattr(response, "text") else str(response)
@@ -257,7 +222,7 @@ async def main():
     
     console.clear()
     console.print(Panel.fit(
-        "[bold green]Asystent Techniczny - Tryb Pro (Auto-Monitoring CI/CD + Fast Chat)[/bold green]\n"
+        "[bold green]Asystent Techniczny - Tryb Pro[/bold green]\n"
         f"Katalog roboczy: [cyan]{PROJECT_DIR}[/cyan]",
         border_style="green"
     ))

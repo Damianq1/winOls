@@ -1,58 +1,90 @@
 package com.winols.app.edit
 
-import com.winols.app.BinModel
+import com.winols.app.data.BinaryBufferManager
 import com.winols.app.model.MapDefinition
 
-class MapEditor(private val binModel: BinModel) {
+class MapEditor(
+    private val bufferManager: BinaryBufferManager,
+    private val batchEngine: MapBatchEngine = MapBatchEngine()
+) {
+    private val undoStack = ArrayDeque<ByteArray>()
+    private val redoStack = ArrayDeque<ByteArray>()
 
-    fun modifySingleCell(map: MapDefinition, row: Int, col: Int, newValue: Double) {
-        binModel.setCellValue(map, row, col, newValue)
-    }
+    fun loadMapGrid(mapDef: MapDefinition): Array<DoubleArray> {
+        val rows = mapDef.yAxisDimension
+        val cols = mapDef.xAxisDimension
+        val grid = Array(rows) { DoubleArray(cols) }
 
-    fun applyOffsetToSelection(
-        map: MapDefinition,
-        selectedCells: List<Pair<Int, Int>>,
-        offset: Double
-    ) {
-        for ((r, c) in selectedCells) {
-            val current = binModel.getCellValue(map, r, c)
-            binModel.setCellValue(map, r, c, current + offset)
-        }
-    }
+        var offset = mapDef.startAddress
+        val elementSize = mapDef.elementBitSize / 8
 
-    fun applyPercentageToSelection(
-        map: MapDefinition,
-        selectedCells: List<Pair<Int, Int>>,
-        percentage: Double
-    ) {
-        for ((r, c) in selectedCells) {
-            binModel.applyPercentageChange(map, r, c, percentage)
-        }
-    }
-
-    fun interpolate2D(
-        map: MapDefinition,
-        startRow: Int,
-        startCol: Int,
-        endRow: Int,
-        endCol: Int
-    ) {
-        val v00 = binModel.getCellValue(map, startRow, startCol)
-        val v01 = binModel.getCellValue(map, startRow, endCol)
-        val v10 = binModel.getCellValue(map, endRow, startCol)
-        val v11 = binModel.getCellValue(map, endRow, endCol)
-
-        val rowSpan = (endRow - startRow).coerceAtLeast(1)
-        val colSpan = (endCol - startCol).coerceAtLeast(1)
-
-        for (r in startRow..endRow) {
-            val ry = (r - startRow).toDouble() / rowSpan
-            for (c in startCol..endCol) {
-                val cx = (c - startCol).toDouble() / colSpan
-                val interp = (1 - ry) * ((1 - cx) * v00 + cx * v01) +
-                        ry * ((1 - cx) * v10 + cx * v11)
-                binModel.setCellValue(map, r, c, interp)
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val rawValue = bufferManager.readNumeric(offset, elementSize, mapDef.isSigned, mapDef.isLittleEndian)
+                grid[r][c] = (rawValue * mapDef.scaleFactor) + mapDef.offset
+                offset += elementSize
             }
         }
+        return grid
+    }
+
+    fun applyBatchEdit(
+        mapDef: MapDefinition,
+        currentGrid: Array<DoubleArray>,
+        selection: CellSelection,
+        operation: MapBatchOperation
+    ): Array<DoubleArray> {
+        saveSnapshot()
+
+        val updatedGrid = batchEngine.applyOperation(
+            grid = currentGrid,
+            selection = selection,
+            operation = operation,
+            clampMin = mapDef.minValue ?: -Double.MAX_VALUE,
+            clampMax = mapDef.maxValue ?: Double.MAX_VALUE
+        )
+
+        commitToBinary(mapDef, updatedGrid)
+        return updatedGrid
+    }
+
+    private fun commitToBinary(mapDef: MapDefinition, grid: Array<DoubleArray>) {
+        val rows = mapDef.yAxisDimension
+        val cols = mapDef.xAxisDimension
+        val elementSize = mapDef.elementBitSize / 8
+        var offset = mapDef.startAddress
+
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val physicalValue = grid[r][c]
+                val rawValue = ((physicalValue - mapDef.offset) / mapDef.scaleFactor).toLong()
+                bufferManager.writeNumeric(offset, rawValue, elementSize, mapDef.isLittleEndian)
+                offset += elementSize
+            }
+        }
+    }
+
+    private fun saveSnapshot() {
+        undoStack.addLast(bufferManager.getSnapshot())
+        redoStack.clear()
+        if (undoStack.size > 50) {
+            undoStack.removeFirst()
+        }
+    }
+
+    fun undo(): Boolean {
+        if (undoStack.isEmpty()) return false
+        redoStack.addLast(bufferManager.getSnapshot())
+        val previousState = undoStack.removeLast()
+        bufferManager.restoreSnapshot(previousState)
+        return true
+    }
+
+    fun redo(): Boolean {
+        if (redoStack.isEmpty()) return false
+        undoStack.addLast(bufferManager.getSnapshot())
+        val nextState = redoStack.removeLast()
+        bufferManager.restoreSnapshot(nextState)
+        return true
     }
 }
