@@ -1,29 +1,66 @@
 package com.winols.app.data
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
+import com.winols.app.model.SignMode
+import com.winols.app.model.ViewConfiguration
+import com.winols.app.model.WordSize
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.channels.FileChannel
-import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.read
-import kotlin.concurrent.write
 
 /**
- * Typ reprezentacji danych w pamięci ECU.
+ * Singleton / Manager bufora pamięci Flash/EEPROM z obsługą dynamicznej zmiany widoku.
  */
-enum class DataWordSize(val bytesCount: Int) {
-    BYTE_8(1),
-    WORD_16(2),
-    DWORD_32(4)
+class BinaryBufferManager {
+
+    private var buffer: ByteBuffer? = null
+
+    private val _viewConfig = MutableStateFlow(ViewConfiguration())
+    val viewConfig: StateFlow<ViewConfiguration> = _viewConfig.asStateFlow()
+
+    fun setBuffer(data: ByteArray) {
+        val directBuf = ByteBuffer.allocateDirect(data.size)
+        directBuf.order(ByteOrder.LITTLE_ENDIAN)
+        directBuf.put(data)
+        directBuf.position(0)
+        this.buffer = directBuf
+    }
+
+    fun getBuffer(): ByteBuffer? = buffer
+
+    fun updateWordSize(size: WordSize) {
+        _viewConfig.value = _viewConfig.value.copy(wordSize = size)
+    }
+
+    fun updateByteOrder(order: ByteOrder) {
+        _viewConfig.value = _viewConfig.value.copy(byteOrder = order)
+    }
+
+    fun updateSignMode(signMode: SignMode) {
+        _viewConfig.value = _viewConfig.value.copy(signMode = signMode)
+    }
+
+    fun toggleHexDecimal(showHex: Boolean) {
+        _viewConfig.value = _viewConfig.value.copy(isHexDisplay = showHex)
+    }
+
+    fun updatePhysicalFactors(factor: Double, offset: Double, precision: Int = 2) {
+        _viewConfig.value = _viewConfig.value.copy(
+            factor = factor,
+            offset = offset,
+            precision = precision
+        )
+    }
+
+    fun setColumnsCount(columns: Int) {
+        if (columns > 0) {
+            _viewConfig.value = _viewConfig.value.copy(columnsCount = columns)
+        }
+    }
+
+    fun getFormattedValueAt(address: Int): String {
+        val currentBuf = buffer ?: return ""
+        return DataFormatterEngine.formatValue(currentBuf, address, _viewConfig.value)
+    }
 }
-
-/**
- * Pojedynczy wpis historii zmian do obsługi granularOto kompletna, zoptymalizowana implementacja modułu zarządzania buforem binarnym (`BinaryBufferManager.kt`), zaprojektowana specjalnie pod kątem wydajnej pracy z plikami wsadów ECU (512 KB – 8 MB+) na Androidzie.
-
-Wykorzystuje bezpośredni bufor `ByteBuffer.allocateDirect()`, kanały `FileChannel`, mechanizm migawek pamięci (Undo/Redo) oraz asynchroniczne wsparcie dla Kotlin Coroutines.
-
-### app/src/main/java/com/winols/app/data/BinaryBufferManager.kt

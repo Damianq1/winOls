@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout android:background="#0F172A" android:layout_height="wrap_content" android:layout_width="match_parent" android:orientation="vertical" android:padding="20dp" xmlns:android="[http://schemas.android.com/apk/res/android](http://schemas.android.com/apk/res/android)">
+
+    <TextView android:id="@+id/tvBulkTitle" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Masowa Edycja Komórek" android:textColor="#F8FAFC" android:textSize="18sp" android:textStyle="bold"/>
+
+    <RadioGroup android:id="@+id/rgOperations" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:layout_width="match_parent">
+
+        <RadioButton android:checked="true" android:id="@+id/rbAdd" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Dodaj wartość (+)" android:textColor="#E2E8F0"/>
+
+        <RadioButton android:id="@+id/rbSubtract" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Odejmij wartość (-)" android:textColor="#E2E8F0"/>
+
+        <RadioButton android:id="@+id/rbPercent" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Zmiana procentowa (%)" android:textColor="#E2E8F0"/>
+
+        <RadioButton android:id="@+id/rbConstant" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Wklej stałą wartość (=)" android:textColor="#E2E8F0"/>
+
+        <RadioButton android:id="@+id/rbSmooth" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Wygładzanie 3x3 (Smooth)" android:textColor="#E2E8F0"/>
+    </RadioGroup>
+
+    <EditText android:background="#1E293B" android:hint="Wartość (np. 10.5 lub 5%)" android:id="@+id/etParamValue" android:inputType="numberDecimal|numberSigned" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:layout_width="match_parent" android:padding="12dp" android:textColor="#FFFFFF" android:textColorHint="#64748B"/>
+
+</LinearLayout>
