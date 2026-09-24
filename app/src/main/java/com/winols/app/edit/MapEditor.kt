@@ -3,88 +3,35 @@ package com.winols.app.edit
 import com.winols.app.data.BinaryBufferManager
 import com.winols.app.model.MapDefinition
 
-class MapEditor(
-    private val bufferManager: BinaryBufferManager,
-    private val batchEngine: MapBatchEngine = MapBatchEngine()
-) {
-    private val undoStack = ArrayDeque<ByteArray>()
-    private val redoStack = ArrayDeque<ByteArray>()
+class MapEditor(private val bufferManager: BinaryBufferManager) {
 
-    fun loadMapGrid(mapDef: MapDefinition): Array<DoubleArray> {
-        val rows = mapDef.yAxisDimension
-        val cols = mapDef.xAxisDimension
-        val grid = Array(rows) { DoubleArray(cols) }
+    fun getPhysicalValues(map: MapDefinition): Array<DoubleArray> {
+        val result = Array(map.rows) { DoubleArray(map.columns) }
+        var currentAddr = map.startAddress
 
-        var offset = mapDef.startAddress
-        val elementSize = mapDef.elementBitSize / 8
-
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                val rawValue = bufferManager.readNumeric(offset, elementSize, mapDef.isSigned, mapDef.isLittleEndian)
-                grid[r][c] = (rawValue * mapDef.scaleFactor) + mapDef.offset
-                offset += elementSize
+        for (r in 0 until map.rows) {
+            for (c in 0 until map.columns) {
+                val rawValue = bufferManager.readValue(currentAddr, map.dataType)
+                result[r][c] = rawValue * map.factor + map.offset
+                currentAddr += map.dataType.byteSize
             }
         }
-        return grid
+        return result
     }
 
-    fun applyBatchEdit(
-        mapDef: MapDefinition,
-        currentGrid: Array<DoubleArray>,
-        selection: CellSelection,
-        operation: MapBatchOperation
-    ): Array<DoubleArray> {
-        saveSnapshot()
-
-        val updatedGrid = batchEngine.applyOperation(
-            grid = currentGrid,
-            selection = selection,
-            operation = operation,
-            clampMin = mapDef.minValue ?: -Double.MAX_VALUE,
-            clampMax = mapDef.maxValue ?: Double.MAX_VALUE
-        )
-
-        commitToBinary(mapDef, updatedGrid)
-        return updatedGrid
+    fun setPhysicalValue(map: MapDefinition, row: Int, col: Int, physicalValue: Double) {
+        require(row in 0 until map.rows && col in 0 until map.columns) { "Cell indices out of bounds" }
+        val targetAddr = map.startAddress + (row * map.columns + col) * map.dataType.byteSize
+        val rawValue = (physicalValue - map.offset) / map.factor
+        bufferManager.writeValue(targetAddr, map.dataType, rawValue)
     }
 
-    private fun commitToBinary(mapDef: MapDefinition, grid: Array<DoubleArray>) {
-        val rows = mapDef.yAxisDimension
-        val cols = mapDef.xAxisDimension
-        val elementSize = mapDef.elementBitSize / 8
-        var offset = mapDef.startAddress
-
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                val physicalValue = grid[r][c]
-                val rawValue = ((physicalValue - mapDef.offset) / mapDef.scaleFactor).toLong()
-                bufferManager.writeNumeric(offset, rawValue, elementSize, mapDef.isLittleEndian)
-                offset += elementSize
-            }
-        }
-    }
-
-    private fun saveSnapshot() {
-        undoStack.addLast(bufferManager.getSnapshot())
-        redoStack.clear()
-        if (undoStack.size > 50) {
-            undoStack.removeFirst()
-        }
-    }
-
-    fun undo(): Boolean {
-        if (undoStack.isEmpty()) return false
-        redoStack.addLast(bufferManager.getSnapshot())
-        val previousState = undoStack.removeLast()
-        bufferManager.restoreSnapshot(previousState)
-        return true
-    }
-
-    fun redo(): Boolean {
-        if (redoStack.isEmpty()) return false
-        undoStack.addLast(bufferManager.getSnapshot())
-        val nextState = redoStack.removeLast()
-        bufferManager.restoreSnapshot(nextState)
-        return true
+    fun applyPercentageOffset(map: MapDefinition, row: Int, col: Int, percentDelta: Double) {
+        val targetAddr = map.startAddress + (row * map.columns + col) * map.dataType.byteSize
+        val currentRaw = bufferManager.readValue(targetAddr, map.dataType)
+        val currentPhysical = currentRaw * map.factor + map.offset
+        val newPhysical = currentPhysical * (1.0 + percentDelta / 100.0)
+        val newRaw = (newPhysical - map.offset) / map.factor
+        bufferManager.writeValue(targetAddr, map.dataType, newRaw)
     }
 }

@@ -1,61 +1,52 @@
 package com.winols.app.engine
 
 import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.DataType
 import com.winols.app.model.MapDefinition
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
+import java.util.UUID
 
 class MapFinderEngine(private val bufferManager: BinaryBufferManager) {
 
-    suspend fun scanForPotentialMaps(
+    fun scanPotentialMaps(
         minRows: Int = 4,
         maxRows: Int = 32,
         minCols: Int = 4,
         maxCols: Int = 32,
-        onProgress: ((progressPercent: Int) -> Unit)? = null
-    ): List<MapDefinition> = withContext(Dispatchers.Default) {
-        val totalSize = bufferManager.size.toInt()
-        if (totalSize <= 0) return@withContext emptyList()
+        dataType: DataType = DataType.UWORD_BE
+    ): List<MapDefinition> {
+        val candidates = mutableListOf<MapDefinition>()
+        val step = dataType.byteSize
+        val end = bufferManager.size - (minRows * minCols * step)
 
-        val foundMaps = mutableListOf<MapDefinition>()
-        val step = 16
-        val totalSteps = totalSize / step
-
-        for (i in 0 until totalSteps) {
-            ensureActive()
-
-            val offset = i * step
-            if (offset + (maxRows * maxCols * 2) > totalSize) break
-
-            if (isPlausibleMapHeader(offset)) {
-                val detectedRows = 16
-                val detectedCols = 16
-                foundMaps.add(
-                    MapDefinition(
-                        name = "Detected_Map_0x${offset.toString(16).uppercase()}",
-                        startAddress = offset,
-                        rows = detectedRows,
-                        columns = detectedCols,
-                        is16Bit = true,
-                        isSigned = false
+        var addr = 0
+        while (addr < end) {
+            if (isPlausibleHeader(addr, dataType)) {
+                val rows = 16
+                val cols = 16
+                if (addr + rows * cols * step <= bufferManager.size) {
+                    candidates.add(
+                        MapDefinition(
+                            id = UUID.randomUUID().toString(),
+                            name = "AutoMap_${Integer.toHexString(addr).uppercase()}",
+                            startAddress = addr,
+                            rows = rows,
+                            columns = cols,
+                            dataType = dataType
+                        )
                     )
-                )
+                    addr += rows * cols * step
+                    continue
+                }
             }
-
-            if (i % 256 == 0 && onProgress != null) {
-                val progress = ((i.toFloat() / totalSteps) * 100).toInt()
-                onProgress(progress)
-            }
+            addr += step
         }
-
-        onProgress?.invoke(100)
-        foundMaps
+        return candidates
     }
 
-    private suspend fun isPlausibleMapHeader(offset: Int): Boolean = withContext(Dispatchers.Default) {
-        val sample = bufferManager.getBytes(offset, 8)
-        val nonZeroCount = sample.count { it.toInt() != 0 }
-        nonZeroCount in 2..6
+    private fun isPlausibleHeader(address: Int, dataType: DataType): Boolean {
+        if (address + 4 > bufferManager.size) return false
+        val val1 = bufferManager.readValue(address, dataType)
+        val val2 = bufferManager.readValue(address + dataType.byteSize, dataType)
+        return val1 > 0 && val2 > 0 && val1 != val2 && val1 < 0xFFFF
     }
 }
