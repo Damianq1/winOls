@@ -79,24 +79,6 @@ def apply_changes(response_text):
             updated_files.append(path_str)
     return updated_files
 
-def sync_with_github():
-    try:
-        console.print("[yellow][*] Synchronizacja z GitHubem (git pull)...[/yellow]")
-        subprocess.run(["git", "pull", "--rebase"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
-    except Exception as e:
-        console.print(f"[yellow][!] Ostrzeżenie przy git pull: {e}[/yellow]")
-
-def push_to_github():
-    try:
-        console.print("[yellow][*] Wysyłanie zmian na GitHub (git push)...[/yellow]")
-        res = subprocess.run(["git", "push"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
-        if res.returncode == 0:
-            console.print("[bold green][✓] Zmiany zostały pomyślnie wypchnięte na GitHub![/bold green]")
-        else:
-            console.print(f"[yellow][!] Git push zwrócił błąd: {res.stderr.strip()}[/yellow]")
-    except Exception as e:
-        console.print(f"[yellow][!] Błąd wysyłania do Gita: {e}[/yellow]")
-
 def run_git_commit(msg="Auto-commit (agent self-heal checkpoint)"):
     try:
         subprocess.run(["git", "add", "."], cwd=str(PROJECT_PATH), capture_output=True)
@@ -108,6 +90,7 @@ def run_git_commit(msg="Auto-commit (agent self-heal checkpoint)"):
 def run_gradle_build():
     console.print("[yellow][*] Uruchamianie kompilacji Gradle (./gradlew assembleDebug)...[/yellow]")
     try:
+        # Odpalamy gradle build z ograniczeniem do 3 minut
         res = subprocess.run(
             ["./gradlew", "assembleDebug"],
             cwd=str(PROJECT_PATH),
@@ -118,6 +101,7 @@ def run_gradle_build():
         if res.returncode == 0:
             return True, "Build zakończony sukcesem!"
         else:
+            # Wyciągamy istotne linie błędu (np. z błędem kompilacji Kotlin/Java)
             stderr_lines = res.stderr.splitlines() + res.stdout.splitlines()
             error_snippet = "\n".join([line for line in stderr_lines if "error" in line.lower() or "e: " in line or "fail" in line.lower()][-30:])
             if not error_snippet:
@@ -131,7 +115,7 @@ def run_gradle_build():
 async def main():
     ensure_valid_cwd()
     console.clear()
-    console.print(Panel.fit("[bold green]WinOls Self-Healing Autonomous Agent (z GitSync)[/bold green]"))
+    console.print(Panel.fit("[bold green]WinOls Self-Healing Autonomous Agent[/bold green]"))
 
     env = load_env_vars()
     psid = env.get("__Secure-1PSID", "")
@@ -147,8 +131,9 @@ async def main():
         console.print("[bold red][!] Błąd inicjalizacji klienta.[/bold red]")
         return
 
-    console.print("[bold green][✓] Gotowe. Agent dba o synchronizację z GitHubem, build i naprawę błędów.[/bold green]")
+    console.print("[bold green][✓] Gotowe. Agent uruchomi testowy build, a w razie błędów sam je naprawi z Gemini.[/bold green]")
 
+    # Główna pętla samonaprawcza
     max_loops = 10
     loop_count = 0
 
@@ -156,22 +141,18 @@ async def main():
         loop_count += 1
         console.print(f"\n[bold cyan]--- Cykl Samonaprawy #{loop_count}/{max_loops} ---[/bold cyan]")
 
-        # 0. Zaciągnij najnowsze zmiany z GitHub
-        sync_with_github()
-
         # 1. Odpalamy build gradle
         success, build_output = run_gradle_build()
 
         if success:
             console.print("[bold green][✓] KOD KOMPILUJE SIĘ BEZ BŁĘDÓW! Projekt jest w pełni sprawny.[/bold green]")
-            push_to_github() # Wypchnij stan produkcyjny na GitHub
-            
             user_next = console.input("\n[bold magenta]Wszystko działa. Wpisz nowe zadanie dla agenta (lub 'exit' aby zakończyć) > [/bold magenta]").strip()
             if user_next.lower() in {"exit", "quit", "q"}:
                 break
             if user_next:
+                # Jeśli user poda nowe zadanie, wrzucamy je do gita i jedziemy dalej
                 run_git_commit(f"User task: {user_next[:30]}")
-                push_to_github()
+                # Sztucznie tworzymy błąd-prompt z nowym zadaniem dla Gemini
                 build_output = f"Nowe zadanie od użytkownika do zaimplementowania: {user_next}"
             else:
                 break
@@ -182,6 +163,7 @@ async def main():
         struct = get_lightweight_structure()
         file_context = ""
         
+        # Próbujemy odnaleźć pliki wymienione w błędzie Gradle
         for line in struct:
             filename = line.strip(" -")
             if filename in build_output or Path(filename).name in build_output:
@@ -217,9 +199,6 @@ async def main():
                 run_git_commit(f"Auto-fix błędu dla: {', '.join(updated)}")
             else:
                 run_git_commit("Auto-commit po próbie naprawy (brak bezpośrednich ścieżek)")
-            
-            # Wypchnij poprawki automatycznie na GitHub
-            push_to_github()
         else:
             console.print("[yellow][!] Pusta odpowiedź od modelu. Ponawiam za chwilę...[/yellow]")
             await asyncio.sleep(5)

@@ -3,91 +3,71 @@ package com.winols.app
 import com.winols.app.data.BinaryBufferManager
 import com.winols.app.edit.MapEditor
 import com.winols.app.engine.ChecksumEngine
-import com.winols.app.export.ExcelExporter
-import com.winols.app.model.DataType
+import com.winols.app.model.DataFormat
 import com.winols.app.model.MapDefinition
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import java.io.File
 
 class CoreEngineTest {
 
-    private lateinit var buffer: ByteArray
-    private lateinit var bufferManager: BinaryBufferManager
+    @Test
+    fun testBufferReadWrite() {
+        val buffer = ByteArray(16)
+        val manager = BinaryBufferManager(buffer)
 
-    @BeforeEach
-    fun setUp() {
-        buffer = ByteArray(512) { 0 }
-        bufferManager = BinaryBufferManager(buffer)
+        // Zapis wartości 16-bit LE (0x1234 -> [0x34, 0x12])
+        manager.writeRawValue(0, 0x1234, DataFormat.UWORD_LE)
+        assertEquals(0x1234L, manager.readRawValue(0, DataFormat.UWORD_LE))
+        assertEquals(0x34.toByte(), manager.getRawByte(0))
+        assertEquals(0x12.toByte(), manager.getRawByte(1))
+
+        // Test przeliczania fizycznego (wartość * 0.1)
+        val phys = manager.readPhysicalValue(0, DataFormat.UWORD_LE, 0.1, 0.0)
+        assertEquals(0x1234 * 0.1, phys, 0.0001)
     }
 
     @Test
-    fun `test checksum calculate verify and patch`() {
-        // Blok danych 0x10 do 0x13: 4 bajty [0x10, 0x20, 0x30, 0x40]
-        buffer[0x10] = 0x10.toByte()
-        buffer[0x11] = 0x20.toByte()
-        buffer[0x12] = 0x30.toByte()
-        buffer[0x13] = 0x40.toByte()
+    fun testMapEditorMatrixModification() {
+        val rawBytes = ByteArray(32)
+        val manager = BinaryBufferManager(rawBytes)
 
-        val block = ChecksumEngine.ChecksumBlock(
-            id = "CHK_1",
-            description = "Main Add16 Checksum",
-            startAddress = 0x10,
-            endAddress = 0x13,
-            checksumAddress = 0x20,
-            algorithm = ChecksumEngine.Algorithm.ADD16_LE
-        )
-
-        val engine = ChecksumEngine(bufferManager)
-
-        // Suma 16-bit: (0x2010 + 0x4030) = 0x6040 (24640)
-        val calculated = engine.calculate(block)
-        assertEquals(0x6040L, calculated)
-
-        // Weryfikacja przed spatchowaniem powinna zwrócić false
-        assertFalse(engine.verify(block))
-
-        // Spatchowanie sumy kontrolnej w buforze
-        engine.patch(block)
-        assertTrue(engine.verify(block))
-
-        val writtenLow = bufferManager.readRawValue(0x20, 1)
-        val writtenHigh = bufferManager.readRawValue(0x21, 1)
-        assertEquals(0x40L, writtenLow)
-        assertEquals(0x60L, writtenHigh)
-    }
-
-    @Test
-    fun `test excel csv export`() {
-        val map = MapDefinition(
-            id = "map_export_test",
-            name = "TestMap",
-            unit = "mg",
-            startAddress = 0x30,
-            rows = 2,
+        val mapDef = MapDefinition(
+            id = "TEST_MAP",
+            name = "Test 2x2",
+            address = 0,
             columns = 2,
-            dataType = DataType.UINT8,
+            rows = 2,
+            dataFormat = DataFormat.UWORD_LE,
             factor = 1.0,
-            additionOffset = 0.0
+            offset = 0.0
         )
-        val editor = MapEditor(bufferManager, map)
-        editor.writePhysicalValue(0, 0, 10.0)
-        editor.writePhysicalValue(0, 1, 20.0)
-        editor.writePhysicalValue(1, 0, 30.0)
-        editor.writePhysicalValue(1, 1, 40.0)
 
-        val tempFile = File.createTempFile("map_export", ".csv")
-        tempFile.deleteOnExit()
+        val editor = MapEditor(manager, mapDef)
+        val input = arrayOf(
+            doubleArrayOf(10.0, 20.0),
+            doubleArrayOf(30.0, 40.0)
+        )
 
-        ExcelExporter.exportToCsv(editor, tempFile)
+        editor.writePhysicalMatrix(input)
+        val output = editor.readPhysicalMatrix()
 
-        val lines = tempFile.readLines()
-        assertTrue(lines.isNotEmpty())
-        assertTrue(lines.any { it.contains("TestMap") })
-        assertTrue(lines.any { it.contains("10.00") && it.contains("20.00") })
-        assertTrue(lines.any { it.contains("30.00") && it.contains("40.00") })
+        assertArrayEquals(input[0], output[0], 0.001)
+        assertArrayEquals(input[1], output[1], 0.001)
+
+        // Zwiększenie o 10%
+        editor.applyPercentageChange(10.0)
+        val modified = editor.readPhysicalMatrix()
+        assertEquals(11.0, modified[0][0], 0.001)
+        assertEquals(44.0, modified[1][1], 0.001)
+    }
+
+    @Test
+    fun testChecksumCalculation() {
+        val raw = byteArrayOf(0x01, 0x02, 0x03, 0x04)
+        val manager = BinaryBufferManager(raw)
+
+        val sum16 = ChecksumEngine.calculateSum16(manager, 0, 4)
+        assertEquals(10, sum16)
     }
 }

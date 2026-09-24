@@ -1,45 +1,35 @@
+import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
 
-class CodeRunner:
-    def __init__(self, work_dir: str):
-        self.work_dir = Path(work_dir)
 
-    def run_cmd(self, command: str, timeout: int = 30) -> dict:
-        """Uruchamia komendę powłoki w katalogu projektu i zwraca wynik."""
-        try:
-            res = subprocess.run(
-                command,
-                shell=True,
-                cwd=str(self.work_dir),
-                capture_output=True,
-                text=True,
-                timeout=timeout
-            )
-            return {
-                "success": res.returncode == 0,
-                "exit_code": res.returncode,
-                "stdout": res.stdout.strip(),
-                "stderr": res.stderr.strip()
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "success": False,
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": f"Przekroczono czas wykonania komendy ({timeout}s)."
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "exit_code": -1,
-                "stdout": "",
-                "stderr": f"Wyjątek podczas uruchamiania: {str(e)}"
-            }
+def ensure_executable(path: Path) -> None:
+    """Upewnia się, że plik ma uprawnienia do wykonywania."""
+    if path.exists():
+        current_mode = os.stat(path).st_mode
+        os.chmod(path, current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    def run_python_file(self, relative_path: str, timeout: int = 30) -> dict:
-        """Uruchamia plik Pythona z projektu."""
-        python_bin = sys.executable
-        cmd = f"{python_bin} {relative_path}"
-        return self.run_cmd(cmd, timeout=timeout)
+
+def run_gradle_task(task: str, project_root: str = ".") -> subprocess.CompletedProcess:
+    root = Path(project_root).resolve()
+    gradlew_path = root / "gradlew"
+
+    if gradlew_path.exists():
+        ensure_executable(gradlew_path)
+        # Wywołanie przez sh zapobiega Errno 13 w przypadku braku praw do bezpośredniego exec
+        cmd = ["sh", str(gradlew_path), task]
+    else:
+        cmd = ["gradle", task]
+
+    print(f"Uruchamianie: {' '.join(cmd)}")
+    return subprocess.run(cmd, cwd=root, capture_output=True, text=True)
+
+
+if __name__ == "__main__":
+    task_name = sys.argv[1] if len(sys.argv) > 1 else "test"
+    result = run_gradle_task(task_name)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    sys.exit(result.returncode)

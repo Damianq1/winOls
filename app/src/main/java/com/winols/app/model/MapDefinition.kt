@@ -1,77 +1,74 @@
 package com.winols.app.model
 
-import java.io.Serializable
-
-enum class Endianness {
-    LITTLE_ENDIAN,
-    BIG_ENDIAN
-}
+import java.nio.ByteOrder
 
 enum class DataType(val byteSize: Int) {
-    UINT8(1),
-    INT8(1),
-    UINT16(2),
-    INT16(2),
-    UINT32(4),
-    INT32(4),
-    FLOAT32(4)
+    UBYTE(1),
+    SBYTE(1),
+    UWORD_LE(2),
+    UWORD_BE(2),
+    SWORD_LE(2),
+    SWORD_BE(2),
+    UDWORD_LE(4),
+    UDWORD_BE(4),
+    SDWORD_LE(4),
+    SDWORD_BE(4),
+    FLOAT_LE(4),
+    FLOAT_BE(4);
+
+    val byteOrder: ByteOrder
+        get() = when (this) {
+            UWORD_BE, SWORD_BE, UDWORD_BE, SDWORD_BE, FLOAT_BE -> ByteOrder.BIG_ENDIAN
+            else -> ByteOrder.LITTLE_ENDIAN
+        }
+
+    val isSigned: Boolean
+        get() = when (this) {
+            SBYTE, SWORD_LE, SWORD_BE, SDWORD_LE, SDWORD_BE -> true
+            else -> false
+        }
 }
 
-enum class MapCategory {
-    INJECTION,
-    IGNITION_BOOST,
-    TORQUE_LIMITER,
-    RAIL_PRESSURE,
-    LAMBDA_AFR,
-    SENSOR_CALIBRATION,
-    UNKNOWN
-}
-
-data class AxisDefinition(
+data class AxisDefinition @JvmOverloads constructor(
+    val id: String,
     val name: String,
     val unit: String = "",
     val address: Int,
     val length: Int,
-    val dataType: DataType = DataType.UINT16,
-    val endianness: Endianness = Endianness.LITTLE_ENDIAN,
+    val dataType: DataType = DataType.UWORD_LE,
     val factor: Double = 1.0,
     val offset: Double = 0.0,
-    val values: DoubleArray = DoubleArray(0)
-) : Serializable {
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-        other as AxisDefinition
-        return address == other.address && length == other.length && name == other.name
-    }
+    val precision: Int = 2,
+    val isHeaderPresent: Boolean = false
+) {
+    val totalBytes: Int get() = length * dataType.byteSize
 
-    override fun hashCode(): Int {
-        var result = name.hashCode()
-        result = 31 * result + address
-        result = 31 * result + length
-        return result
-    }
+    fun rawToPhysical(raw: Double): Double = (raw * factor) + offset
+    fun physicalToRaw(physical: Double): Double = if (factor != 0.0) (physical - offset) / factor else 0.0
 }
 
-data class MapDefinition(
+data class MapDefinition @JvmOverloads constructor(
     val id: String,
     val name: String,
-    val startAddress: Int,
+    val category: String = "Engine",
+    val description: String = "",
+    val dataAddress: Int,
     val rows: Int,
     val cols: Int,
-    val dataType: DataType = DataType.UINT16,
-    val endianness: Endianness = Endianness.LITTLE_ENDIAN,
+    val dataType: DataType = DataType.UWORD_LE,
     val factor: Double = 1.0,
     val offset: Double = 0.0,
+    val precision: Int = 2,
     val unit: String = "",
-    val category: MapCategory = MapCategory.UNKNOWN,
-    val confidenceScore: Double = 0.0,
     val xAxis: AxisDefinition? = null,
     val yAxis: AxisDefinition? = null
-) : Serializable {
-    val totalBytes: Int
-        get() = rows * cols * dataType.byteSize
+) {
+    val totalElements: Int get() = rows * cols
+    val totalBytes: Int get() = totalElements * dataType.byteSize
+    val endAddress: Int get() = dataAddress + totalBytes
 
-    val is3D: Boolean
-        get() = rows > 1 && cols > 1
+    fun rawToPhysical(raw: Double): Double = (raw * factor) + offset
+    fun physicalToRaw(physical: Double): Double = if (factor != 0.0) (physical - offset) / factor else 0.0
+
+    fun containsAddress(address: Int): Boolean = address in dataAddress until endAddress
 }
