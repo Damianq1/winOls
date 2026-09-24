@@ -6,19 +6,26 @@ import java.io.File
 import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.channels.FileChannel
 
 /**
- * Zaawansowany menedżer bufora binarnego ECU.
- * Obsługuje bezpośrednie bufory pamięci (ByteBuffer.allocateDirect) dla plików binarnych (.bin)
- * oraz import/eksport rekordów Intel HEX (.hex).
+ * Wysokowydajny silnik operacji na buforach binarnych Flash / EEPROM.
+ * Zoptymalizowany pod kątem zero-allocation dla operacji komórkowych
+ * oraz wektorowego sprawdzania różnic ORI vs MOD.
  */
 class BinaryBufferManager(initialCapacity: Int = 0) {
 
     private var directBuffer: ByteBuffer = ByteBuffer.allocateDirect(initialCapacity.coerceAtLeast(0))
     private var originalBackup: ByteBuffer = ByteBuffer.allocateDirect(initialCapacity.coerceAtLeast(0))
 
+    // Dedykowane widoki bez alokacji z ustaloną kolejnością bajtów
+    private var leBuffer: ByteBuffer = directBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+    private var beBuffer: ByteBuffer = directBuffer.duplicate().order(ByteOrder.BIG_ENDIAN)
+    private var leBackup: ByteBuffer = originalBackup.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+
     private val hexCodec = IntelHexCodec()
-    private val valueCache = HashMap<Long, Double>(1024)
+    private val valueCache = HashMap<Long, Double>(2048)
 
     var fileBaseAddress: Long = 0L
         private set
@@ -40,30 +47,34 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         val nameLower = file.name.lowercase()
         if (nameLower.endsWith(".hex") || nameLower.endsWith(".ihex")) {
             file.inputStream().use { loadFromHexStream(it) }
-        } else {
-            val fileLength = file.length().toInt()
-            reallocateIfNeeded(fileLength)
-
-            RandomAccessFile(file, "r").use { raf ->
-                val channel = raf.channel
-                directBuffer.clear()
-                channel.read(directBuffer)
-                directBuffer.flip()
-
-                originalBackup.clear()
-                val dup = directBuffer.duplicate()
-                dup.position(0)
-                originalBackup.put(dup)
-                originalBackup.flip()
-            }
-            fileBaseAddress = 0L
-            invalidateCache()
+            return
         }
+
+        val fileLength = file.length().toInt()
+        reallocateIfNeeded(fileLength)
+
+        RandomAccessFile(file, "r").use { raf ->
+            val channel = raf.channel
+            directBuffer.clear()
+            while (directBuffer.hasRemaining()) {
+                if (channel.read(directBuffer) == -1) break
+            }
+            directBuffer.flip()
+
+            originalBackup.clear()
+            val dup = directBuffer.duplicate()
+            dup.position(0)
+            originalBackup.put(dup)
+            originalBackup.flip()
+        }
+
+        refreshBufferViews()
+        fileBaseAddress = 0L
+        invalidateCache()
     }
 
     @Synchronized
     fun loadFromBytes(bytes: ByteArray) {
-        // Autodetekcja: czy to plik Intel HEX przekazany jako bajty
         if (bytes.size > 11 && bytes[0].toInt().toChar() == ':') {
             loadFromHexStream(ByteArrayInputStream(bytes))
             return
@@ -79,6 +90,7 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         originalBackup.put(bytes)
         originalBackup.flip()
 
+        refreshBufferViews()
         fileBaseAddress = 0L
         invalidateCache()
     }
@@ -98,6 +110,7 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         originalBackup.put(parsed.binaryData)
         originalBackup.flip()
 
+        refreshBufferViews()
         invalidateCache()
     }
 
@@ -105,13 +118,23 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         if (directBuffer.capacity() != requiredSize) {
             directBuffer = ByteBuffer.allocateDirect(requiredSize)
             originalBackup = ByteBuffer.allocateDirect(requiredSize)
+            refreshBufferViews()
         }
+    }
+
+    private fun refreshBufferViews() {
+        leBuffer = directBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        beBuffer = directBuffer.duplicate().order(ByteOrder.BIG_ENDIAN)
+        leBackup = originalBackup.duplicate().order(ByteOrder.LITTLE_ENDIAN)
     }
 
     fun invalidateCache() {
         valueCache.clear()
     }
 
+    /**
+     * Błyskawiczny, bezpośredni odczyt wartości bez alokowania obiektów pośrednich.
+     */
     fun readValue(address: Long, type: DataType): Double {
         val relAddr = address - fileBaseAddress
         val cacheKey = (relAddr shl 8) or type.ordinal.toLong()
@@ -119,102 +142,55 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         if (cached != null) return cached
 
         val idx = relAddr.toInt()
-        if (idx < 0 || idx + type.byteSize > directBuffer.capacity()) {
+        val cap = directBuffer.capacity()
+        if (idx < 0 || idx + type.byteSize > cap) {
             return 0.0
         }
 
         val result = when (type) {
             DataType.UBYTE -> (directBuffer.get(idx).toInt() and 0xFF).toDouble()
             DataType.SBYTE -> directBuffer.get(idx).toDouble()
-            DataType.UWORD_LE -> {
-                val b0 = directBuffer.get(idx).toInt() and 0xFF
-                val b1 = directBuffer.get(idx + 1).toInt() and 0xFF
-                ((b1 shl 8) or b0).toDouble()
-            }
-            DataType.SWORD_LE -> {
-                val b0 = directBuffer.get(idx).toInt() and 0xFF
-                val b1 = directBuffer.get(idx + 1).toInt()
-                ((b1 shl 8) or b0).toShort().toDouble()
-            }
-            DataType.UWORD_BE -> {
-                val b0 = directBuffer.get(idx).toInt() and 0xFF
-                val b1 = directBuffer.get(idx + 1).toInt() and 0xFF
-                ((b0 shl 8) or b1).toDouble()
-            }
-            DataType.SWORD_BE -> {
-                val b0 = directBuffer.get(idx).toInt()
-                val b1 = directBuffer.get(idx + 1).toInt() and 0xFF
-                ((b0 shl 8) or b1).toShort().toDouble()
-            }
-            DataType.UDWORD_LE -> {
-                val b0 = directBuffer.get(idx).toLong() and 0xFFL
-                val b1 = directBuffer.get(idx + 1).toLong() and 0xFFL
-                val b2 = directBuffer.get(idx + 2).toLong() and 0xFFL
-                val b3 = directBuffer.get(idx + 3).toLong() and 0xFFL
-                ((b3 shl 24) or (b2 shl 16) or (b1 shl 8) or b0).toDouble()
-            }
-            DataType.SDWORD_LE -> {
-                val b0 = directBuffer.get(idx).toInt() and 0xFF
-                val b1 = directBuffer.get(idx + 1).toInt() and 0xFF
-                val b2 = directBuffer.get(idx + 2).toInt() and 0xFF
-                val b3 = directBuffer.get(idx + 3).toInt()
-                ((b3 shl 24) or (b2 shl 16) or (b1 shl 8) or b0).toDouble()
-            }
-            DataType.UDWORD_BE -> {
-                val b0 = directBuffer.get(idx).toLong() and 0xFFL
-                val b1 = directBuffer.get(idx + 1).toLong() and 0xFFL
-                val b2 = directBuffer.get(idx + 2).toLong() and 0xFFL
-                val b3 = directBuffer.get(idx + 3).toLong() and 0xFFL
-                ((b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3).toDouble()
-            }
-            DataType.SDWORD_BE -> {
-                val b0 = directBuffer.get(idx).toInt()
-                val b1 = directBuffer.get(idx + 1).toInt() and 0xFF
-                val b2 = directBuffer.get(idx + 2).toInt() and 0xFF
-                val b3 = directBuffer.get(idx + 3).toInt() and 0xFF
-                ((b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3).toDouble()
-            }
+            DataType.UWORD_LE -> (leBuffer.getShort(idx).toInt() and 0xFFFF).toDouble()
+            DataType.SWORD_LE -> leBuffer.getShort(idx).toDouble()
+            DataType.UWORD_BE -> (beBuffer.getShort(idx).toInt() and 0xFFFF).toDouble()
+            DataType.SWORD_BE -> beBuffer.getShort(idx).toDouble()
+            DataType.UDWORD_LE -> (leBuffer.getInt(idx).toLong() and 0xFFFFFFFFL).toDouble()
+            DataType.SDWORD_LE -> leBuffer.getInt(idx).toDouble()
+            DataType.UDWORD_BE -> (beBuffer.getInt(idx).toLong() and 0xFFFFFFFFL).toDouble()
+            DataType.SDWORD_BE -> beBuffer.getInt(idx).toDouble()
         }
 
-        if (valueCache.size < 4096) {
+        if (valueCache.size < 8192) {
             valueCache[cacheKey] = result
         }
         return result
     }
 
+    /**
+     * Zoptymalizowany zapis wartości do bufora bezpośredniego.
+     */
     @Synchronized
     fun writeValue(address: Long, type: DataType, rawValue: Double) {
         val relAddr = address - fileBaseAddress
         val idx = relAddr.toInt()
-        if (idx < 0 || idx + type.byteSize > directBuffer.capacity()) return
+        val cap = directBuffer.capacity()
+        if (idx < 0 || idx + type.byteSize > cap) return
 
         when (type) {
             DataType.UBYTE, DataType.SBYTE -> {
                 directBuffer.put(idx, rawValue.toInt().toByte())
             }
             DataType.UWORD_LE, DataType.SWORD_LE -> {
-                val s = rawValue.toInt()
-                directBuffer.put(idx, (s and 0xFF).toByte())
-                directBuffer.put(idx + 1, ((s shr 8) and 0xFF).toByte())
+                leBuffer.putShort(idx, rawValue.toInt().toShort())
             }
             DataType.UWORD_BE, DataType.SWORD_BE -> {
-                val s = rawValue.toInt()
-                directBuffer.put(idx, ((s shr 8) and 0xFF).toByte())
-                directBuffer.put(idx + 1, (s and 0xFF).toByte())
+                beBuffer.putShort(idx, rawValue.toInt().toShort())
             }
             DataType.UDWORD_LE, DataType.SDWORD_LE -> {
-                val v = rawValue.toLong()
-                directBuffer.put(idx, (v and 0xFF).toByte())
-                directBuffer.put(idx + 1, ((v shr 8) and 0xFF).toByte())
-                directBuffer.put(idx + 2, ((v shr 16) and 0xFF).toByte())
-                directBuffer.put(idx + 3, ((v shr 24) and 0xFF).toByte())
+                leBuffer.putInt(idx, rawValue.toLong().toInt())
             }
             DataType.UDWORD_BE, DataType.SDWORD_BE -> {
-                val v = rawValue.toLong()
-                directBuffer.put(idx, ((v shr 24) and 0xFF).toByte())
-                directBuffer.put(idx + 1, ((v shr 16) and 0xFF).toByte())
-                directBuffer.put(idx + 2, ((v shr 8) and 0xFF).toByte())
-                directBuffer.put(idx + 3, (v and 0xFF).toByte())
+                beBuffer.putInt(idx, rawValue.toLong().toInt())
             }
         }
 
@@ -222,14 +198,36 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         valueCache.remove(cacheKey)
     }
 
+    /**
+     * Przyspieszone porównywanie bufora MOD z buforem ORI z użyciem słów 64-bitowych (Long).
+     */
     fun getDifferences(): List<Long> {
         val diffList = mutableListOf<Long>()
         val cap = directBuffer.capacity()
-        for (i in 0 until cap) {
+        val longLimit = cap - (cap % 8)
+
+        var i = 0
+        while (i < longLimit) {
+            if (leBuffer.getLong(i) != leBackup.getLong(i)) {
+                // Precyzyjne sprawdzenie 8 bajtów w zmienionym słowie
+                for (b in 0 until 8) {
+                    val targetIdx = i + b
+                    if (directBuffer.get(targetIdx) != originalBackup.get(targetIdx)) {
+                        diffList.add(fileBaseAddress + targetIdx)
+                    }
+                }
+            }
+            i += 8
+        }
+
+        // Dokończenie pozostałych bajtów
+        while (i < cap) {
             if (directBuffer.get(i) != originalBackup.get(i)) {
                 diffList.add(fileBaseAddress + i)
             }
+            i++
         }
+
         return diffList
     }
 
@@ -238,6 +236,30 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         val idx = relAddr.toInt()
         if (idx < 0 || idx >= directBuffer.capacity()) return false
         return directBuffer.get(idx) != originalBackup.get(idx)
+    }
+
+    /**
+     * Szybki odczyt blokowy (Bulk Copy) do zewnętrznej tablicy bajtów.
+     */
+    fun readBulk(address: Long, destination: ByteArray, offset: Int, length: Int) {
+        val relAddr = (address - fileBaseAddress).toInt()
+        if (relAddr < 0 || relAddr + length > directBuffer.capacity()) return
+        val dup = directBuffer.duplicate()
+        dup.position(relAddr)
+        dup.get(destination, offset, length)
+    }
+
+    /**
+     * Szybki zapis blokowy (Bulk Write) z zewnętrznej tablicy bajtów.
+     */
+    @Synchronized
+    fun writeBulk(address: Long, source: ByteArray, offset: Int, length: Int) {
+        val relAddr = (address - fileBaseAddress).toInt()
+        if (relAddr < 0 || relAddr + length > directBuffer.capacity()) return
+        val dup = directBuffer.duplicate()
+        dup.position(relAddr)
+        dup.put(source, offset, length)
+        invalidateCache()
     }
 
     @Synchronized
@@ -252,6 +274,7 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
                 val dup = directBuffer.duplicate()
                 dup.position(0)
                 channel.write(dup)
+                channel.truncate(directBuffer.capacity().toLong())
             }
         }
     }
