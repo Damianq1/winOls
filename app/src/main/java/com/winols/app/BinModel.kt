@@ -1,49 +1,50 @@
 package com.winols.app
 
-import com.winols.app.data.DataWordSize
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.BitWidth
+import com.winols.app.model.DataRepresentation
+import com.winols.app.model.Signedness
 import java.nio.ByteOrder
 
 /**
- * Model widoku i formatowania pojedynczej komórki binarnej do celów UI i Custom Views.
+ * Model stanu pliku binarnego łączący bufor z parametrami widoku i reprezentacją danych.
  */
-data class BinCellModel(
-    val address: Int,
-    val rawValue: Long,
-    val physicalValue: Double,
-    val formattedPhysical: String
-)
-
-/**
- * Konfigurator przeliczania wartości surowych (RAW) na jednostki inżynieryjne.
- * Formuła: Physical = (RAW * factor) + offset
- */
-data class UnitScaleConfig(
-    val factor: Double = 1.0,
-    val offset: Double = 0.0,
-    val precision: Int = 2,
-    val unit: String = ""
+data class BinModel(
+    val bufferManager: BinaryBufferManager,
+    var representation: DataRepresentation = DataRepresentation(
+        bitWidth = BitWidth.BITS_16,
+        signedness = Signedness.UNSIGNED,
+        byteOrder = ByteOrder.LITTLE_ENDIAN
+    ),
+    var activeAddress: Int = 0,
+    var columns: Int = 16
 ) {
-    fun rawToPhysical(raw: Long): Double {
-        return (raw * factor) + offset
+    val totalBytes: Int get() = bufferManager.size
+
+    fun toggleEndianness() {
+        val newOrder = if (representation.byteOrder == ByteOrder.LITTLE_ENDIAN) {
+            ByteOrder.BIG_ENDIAN
+        } else {
+            ByteOrder.LITTLE_ENDIAN
+        }
+        representation = representation.copy(byteOrder = newOrder)
     }
 
-    fun physicalToRaw(phys: Double): Long {
-        if (factor == 0.0) return 0L
-        return Math.round((phys - offset) / factor)
+    fun toggleBitWidth() {
+        val nextWidth = when (representation.bitWidth) {
+            BitWidth.BITS_8 -> BitWidth.BITS_16
+            BitWidth.BITS_16 -> BitWidth.BITS_32
+            BitWidth.BITS_32 -> BitWidth.BITS_8
+        }
+        representation = representation.copy(bitWidth = nextWidth)
     }
 
-    fun format(raw: Long): String {
-        val phys = rawToPhysical(raw)
-        return "%.${precision}f %s".format(phys, unit).trim()
+    fun toggleSignedness() {
+        val nextSign = if (representation.signedness == Signedness.UNSIGNED) {
+            Signedness.SIGNED
+        } else {
+            Signedness.UNSIGNED
+        }
+        representation = representation.copy(signedness = nextSign)
     }
 }
-
-/**
- * Opcje wizualizacji danych w podglądzie HEX oraz widoku Grid View.
- */
-data class ViewDisplayOptions(
-    val wordSize: DataWordSize = DataWordSize.WORD_16,
-    val isSigned: Boolean = false,
-    val byteOrder: ByteOrder = ByteOrder.LITTLE_ENDIAN,
-    val scaleConfig: UnitScaleConfig = UnitScaleConfig()
-)

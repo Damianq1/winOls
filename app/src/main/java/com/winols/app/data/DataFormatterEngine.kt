@@ -1,85 +1,96 @@
 package com.winols.app.data
 
+import com.winols.app.model.ConversionProfile
 import com.winols.app.model.DataRepresentation
+import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Bezstanowy silnik konwersji pomiędzy surowymi bajtami a formatem HEX / wartościami fizycznymi.
+ * Silnik odpowiedzialny za dwustronną translację pomiędzy surowymi bajtami w buforze,
+ * a wyliczonymi wartościami fizycznymi prezentowanymi w tabelach MapGridView i HexGridView.
  */
-object DataFormatterEngine {
+class DataFormatterEngine {
 
-    fun parseRawValue(
-        buffer: BinaryBufferManager,
+    /**
+     * Odczytuje wartość z bufora pod wskazanym adresem i przelicza na wartość fizyczną.
+     */
+    fun readPhysicalValue(
+        buffer: ByteBuffer,
         offset: Int,
-        representation: DataRepresentation
-    ): Long {
-        val isLE = representation.byteOrder == ByteOrder.LITTLE_ENDIAN
-        return when (representation.bitWidth) {
-            8 -> {
-                val b = buffer.getByte(offset).toLong()
-                if (representation.isSigned) b else (b and 0xFFL)
-            }
-            16 -> {
-                val b0 = buffer.getByte(offset).toLong() and 0xFFL
-                val b1 = buffer.getByte(offset + 1).toLong() and 0xFFL
-                val raw = if (isLE) (b1 shl 8) or b0 else (b0 shl 8) or b1
-                if (representation.isSigned) raw.toShort().toLong() else raw
-            }
-            32 -> {
-                val b0 = buffer.getByte(offset).toLong() and 0xFFL
-                val b1 = buffer.getByte(offset + 1).toLong() and 0xFFL
-                val b2 = buffer.getByte(offset + 2).toLong() and 0xFFL
-                val b3 = buffer.getByte(offset + 3).toLong() and 0xFFL
-                val raw = if (isLE) {
-                    (b3 shl 24) or (b2 shl 16) or (b1 shl 8) or b0
-                } else {
-                    (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
-                }
-                if (representation.isSigned) raw.toInt().toLong() else raw
-            }
-            else -> throw IllegalArgumentException("Nieobsługiwana szerokość bitowa: ${representation.bitWidth}")
+        representation: DataRepresentation,
+        profile: ConversionProfile
+    ): Double {
+        val originalOrder = buffer.order()
+        buffer.order(if (representation.isBigEndian) ByteOrder.BIG_ENDIAN else ByteOrder.LITTLE_ENDIAN)
+
+        val raw: Long = when (representation) {
+            DataRepresentation.UBYTE -> buffer.get(offset).toUByte().toLong()
+            DataRepresentation.SBYTE -> buffer.get(offset).toLong()
+            DataRepresentation.UWORD_LE, DataRepresentation.UWORD_BE -> buffer.getShort(offset).toUShort().toLong()
+            DataRepresentation.SWORD_LE, DataRepresentation.SWORD_BE -> buffer.getShort(offset).toLong()
+            DataRepresentation.UDWORD_LE, DataRepresentation.UDWORD_BE -> buffer.getInt(offset).toUInt().toLong()
+            DataRepresentation.SDWORD_LE, DataRepresentation.SDWORD_BE -> buffer.getInt(offset).toLong()
         }
+
+        buffer.order(originalOrder)
+        return profile.rawToPhysical(raw)
     }
 
-    fun rawToPhysical(rawValue: Long, factor: Double, offset: Double): Double {
-        return (rawValue * factor) + offset
-    }
+    /**
+     * Konwertuje wprowadzoną przez użytkownika wartość fizyczną do formatu binarnego i zapisuje do bufora.
+     */
+    fun writePhysicalValue(
+        buffer: ByteBuffer,
+        offset: Int,
+        physicalValue: Double,
+        representation: DataRepresentation,
+        profile: ConversionProfile
+    ) {
+        val rawValue = profile.physicalToRaw(physicalValue, representation)
+        val originalOrder = buffer.order()
+        buffer.order(if (representation.isBigEndian) ByteOrder.BIG_ENDIAN else ByteOrder.LITTLE_ENDIAN)
 
-    fun physicalToRaw(physicalValue: Double, factor: Double, offset: Double): Long {
-        if (factor == 0.0) return 0L
-        return Math.round((physicalValue - offset) / factor)
-    }
-
-    fun encodeValue(
-        value: Long,
-        bitWidth: Int,
-        byteOrder: ByteOrder
-    ): ByteArray {
-        val isLE = byteOrder == ByteOrder.LITTLE_ENDIAN
-        return when (bitWidth) {
-            8 -> byteArrayOf(value.toByte())
-            16 -> {
-                val b0 = (value and 0xFFL).toByte()
-                val b1 = ((value shr 8) and 0xFFL).toByte()
-                if (isLE) byteArrayOf(b0, b1) else byteArrayOf(b1, b0)
+        when (representation) {
+            DataRepresentation.UBYTE, DataRepresentation.SBYTE -> {
+                buffer.put(offset, rawValue.toByte())
             }
-            32 -> {
-                val b0 = (value and 0xFFL).toByte()
-                val b1 = ((value shr 8) and 0xFFL).toByte()
-                val b2 = ((value shr 16) and 0xFFL).toByte()
-                val b3 = ((value shr 24) and 0xFFL).toByte()
-                if (isLE) byteArrayOf(b0, b1, b2, b3) else byteArrayOf(b3, b2, b1, b0)
+            DataRepresentation.UWORD_LE, DataRepresentation.UWORD_BE,
+            DataRepresentation.SWORD_LE, DataRepresentation.SWORD_BE -> {
+                buffer.putShort(offset, rawValue.toShort())
             }
-            else -> throw IllegalArgumentException("Nieobsługiwana szerokość bitowa: $bitWidth")
+            DataRepresentation.UDWORD_LE, DataRepresentation.UDWORD_BE,
+            DataRepresentation.SDWORD_LE, DataRepresentation.SDWORD_BE -> {
+                buffer.putInt(offset, rawValue.toInt())
+            }
         }
+
+        buffer.order(originalOrder)
     }
 
-    fun formatAsHex(buffer: BinaryBufferManager, offset: Int, length: Int): String {
-        val bytes = buffer.getBytes(offset, length)
-        val sb = java.lang.StringBuilder(bytes.size * 3)
-        for (b in bytes) {
-            sb.append(String.format("%02X ", b))
+    /**
+     * Parsowanie wejścia tekstowego z maską wzoru (np. podawanego w definicji mapy).
+     * Wspiera standardowe formaty parametrów factor i offset:
+     * - `x * 0.01`
+     * - `(x * 0.25) - 40`
+     * - `x * 0.1 + 0`
+     */
+    fun parseFormula(expression: String, unit: String = "", decimalPlaces: Int = 2): ConversionProfile {
+        val sanitized = expression.replace(" ", "").lowercase(java.util.Locale.US)
+        
+        // Prosty regex dla form: (x*FACTOR)+OFFSET, (x*FACTOR)-OFFSET, x*FACTOR+OFFSET, x*FACTOR
+        val regex = Regex("""(?:\(?x\*([0-9]*\.?[0-9]+)\)?)?([+-][0-9]*\.?[0-9]+)?""")
+        val match = regex.find(sanitized)
+
+        if (match != null) {
+            val factorStr = match.groups[1]?.value
+            val offsetStr = match.groups[2]?.value
+
+            val factor = factorStr?.toDoubleOrNull() ?: 1.0
+            val offset = offsetStr?.toDoubleOrNull() ?: 0.0
+
+            return ConversionProfile(factor = factor, offset = offset, unit = unit, decimalPlaces = decimalPlaces)
         }
-        return sb.toString().trimEnd()
+
+        return ConversionProfile(1.0, 0.0, unit, decimalPlaces)
     }
 }

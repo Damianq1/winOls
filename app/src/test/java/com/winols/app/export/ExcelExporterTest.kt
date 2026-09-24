@@ -3,6 +3,7 @@ package com.winols.app.export
 import com.winols.app.data.BinaryBufferManager
 import com.winols.app.model.DataRepresentation
 import com.winols.app.model.MapDefinition
+import com.winols.app.model.PhysicalConversion
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -22,74 +23,63 @@ class ExcelExporterTest {
 
     @Before
     fun setUp() {
-        // Bufor 1 KB z przykładowymi danymi 16-bit
-        val rawBytes = ByteArray(1024)
-        for (i in 0 until 1024 step 2) {
-            val val16 = (i / 2) and 0xFFFF
-            rawBytes[i] = (val16 and 0xFF).toByte()
-            rawBytes[i + 1] = ((val16 shr 8) and 0xFF).toByte()
-        }
-
+        val rawBytes = ByteArray(1024) { i -> (i % 256).toByte() }
         bufferManager = BinaryBufferManager()
-        bufferManager.loadBytes(rawBytes)
+        bufferManager.loadBuffer(rawBytes)
         exporter = ExcelExporter(bufferManager)
     }
 
     @Test
-    fun testExportToCsv_ContainsDifferenceAndHeaders() = runBlocking {
-        val mapDef = MapDefinition(
-            name = "Drivers_Wish",
-            startAddress = 0x0010,
+    fun testExportToCsv_GeneratesValidContent() = runBlocking {
+        val map = MapDefinition(
+            name = "Torque Limiter",
+            startAddress = 0x10,
             rows = 2,
-            cols = 2,
-            representation = DataRepresentation.UINT16_LE,
-            factor = 0.1,
-            offset = 0.0,
-            xAxisValues = listOf(1000.0, 2000.0),
-            yAxisValues = listOf(10.0, 20.0)
+            columns = 3,
+            dataRepresentation = DataRepresentation.UINT8,
+            conversion = PhysicalConversion(factor = 0.5, offset = 0.0),
+            unit = "Nm",
+            xAxisValues = doubleArrayOf(1000.0, 2000.0, 3000.0),
+            yAxisValues = doubleArrayOf(50.0, 100.0)
         )
 
-        // Zmodyfikuj komórkę [0, 0] w buforze edycyjnym
-        bufferManager.writeMapCell(mapDef, 0, 0, 100)
-
         val csvFile = tempFolder.newFile("test_map.csv")
-        exporter.exportMap(mapDef, csvFile, ExportOptions(format = ExportFormat.CSV))
+        val result = exporter.exportMap(map, csvFile, ExportConfig(format = ExportFormat.CSV, includeDelta = true))
 
+        assertTrue(result.isSuccess)
         val content = csvFile.readText()
-        assertTrue("Musi zawierać nagłówek mapy", content.contains("Drivers_Wish"))
-        assertTrue("Musi zawierać sekcję zmodyfikowaną", content.contains("--- MAPA ZMODYFIKOWANA (CURRENT) ---"))
-        assertTrue("Musi zawierać sekcję oryginalną", content.contains("--- MAPA ORYGINALNA (ORIGINAL) ---"))
-        assertTrue("Musi zawierać tabelę delta", content.contains("--- RÓŻNICA DELTA (MOD - ORI) ---"))
+        assertTrue(content.contains("Torque Limiter"))
+        assertTrue(content.contains("### MODIFIED / CURRENT DATA ###"))
+        assertTrue(content.contains("### ORIGINAL DATA ###"))
+        assertTrue(content.contains("### DELTA (MOD - ORI) ###"))
     }
 
     @Test
-    fun testExportToXlsx_GeneratesValidZipPackage() = runBlocking {
-        val mapDef = MapDefinition(
-            name = "Turbo_Boost",
-            startAddress = 0x0020,
-            rows = 3,
-            cols = 3,
-            representation = DataRepresentation.UINT16_LE,
-            factor = 1.0,
-            offset = 0.0
+    fun testExportToXlsx_GeneratesValidZipArchive() = runBlocking {
+        val map = MapDefinition(
+            name = "Boost Target",
+            startAddress = 0x20,
+            rows = 4,
+            columns = 4,
+            dataRepresentation = DataRepresentation.UINT16_LE,
+            conversion = PhysicalConversion(factor = 1.0, offset = 0.0),
+            unit = "mbar"
         )
 
         val xlsxFile = tempFolder.newFile("test_map.xlsx")
-        exporter.exportMap(mapDef, xlsxFile, ExportOptions(format = ExportFormat.XLSX))
+        val result = exporter.exportMap(map, xlsxFile, ExportConfig(format = ExportFormat.XLSX, includeDelta = true))
 
-        assertTrue("Plik XLSX musi istnieć i mieć rozmiar > 0", xlsxFile.length() > 0)
+        assertTrue(result.isSuccess)
+        assertTrue(xlsxFile.length() > 0)
 
-        // Weryfikacja struktury kontenera OpenXML
+        // Weryfikacja czy wygenerowany plik to poprawny ZIP ze strukturą OpenXML
         ZipFile(xlsxFile).use { zip ->
-            val contentTypes = zip.getEntry("[Content_Types].xml")
-            val workbook = zip.getEntry("xl/workbook.xml")
-            val sheet = zip.getEntry("xl/worksheets/sheet1.xml")
-            val styles = zip.getEntry("xl/styles.xml")
-
-            assertTrue("Musi zawierać [Content_Types].xml", contentTypes != null)
-            assertTrue("Musi zawierać xl/workbook.xml", workbook != null)
-            assertTrue("Musi zawierać xl/worksheets/sheet1.xml", sheet != null)
-            assertTrue("Musi zawierać xl/styles.xml", styles != null)
+            val entryNames = zip.entries().toList().map { it.name }
+            assertTrue(entryNames.contains("[Content_Types].xml"))
+            assertTrue(entryNames.contains("xl/workbook.xml"))
+            assertTrue(entryNames.contains("xl/worksheets/sheet1.xml"))
+            assertTrue(entryNames.contains("xl/worksheets/sheet2.xml"))
+            assertTrue(entryNames.contains("xl/worksheets/sheet3.xml"))
         }
     }
 }

@@ -2,40 +2,90 @@ package com.winols.app.model
 
 import java.nio.ByteOrder
 
-enum class BitDepth(val bytesPerElement: Int) {
+enum class BitWidth(val byteSize: Int) {
     BITS_8(1),
     BITS_16(2),
     BITS_32(4)
 }
 
-enum class ValueType {
-    SIGNED,
+enum class SignMode {
     UNSIGNED,
-    HEX
+    SIGNED
 }
 
-data class DataRepresentation(
-    val bitDepth: BitDepth = BitDepth.BITS_16,
-    val valueType: ValueType = ValueType.UNSIGNED,
-    val byteOrder: ByteOrder = ByteOrder.LITTLE_ENDIAN,
-    val factor: Double = 1.0,
-    val offset: Double = 0.0,
-    val decimalPlaces: Int = 2
+data class DataFormat(
+    val bitWidth: BitWidth = BitWidth.BITS_16,
+    val signMode: SignMode = SignMode.UNSIGNED,
+    val byteOrder: ByteOrder = ByteOrder.LITTLE_ENDIAN
 ) {
-    fun rawToPhysical(rawValue: Long): Double {
-        return (rawValue * factor) + offset
+    fun readRawValue(buffer: ByteArray, offset: Int): Long {
+        if (offset + bitWidth.byteSize > buffer.size) return 0L
+        
+        return when (bitWidth) {
+            BitWidth.BITS_8 -> {
+                val b0 = buffer[offset].toInt()
+                if (signMode == SignMode.SIGNED) b0.toLong() else (b0 and 0xFF).toLong()
+            }
+            BitWidth.BITS_16 -> {
+                val b0 = buffer[offset].toInt() and 0xFF
+                val b1 = buffer[offset + 1].toInt() and 0xFF
+                val raw16 = if (byteOrder == ByteOrder.LITTLE_ENDIAN) {
+                    (b1 shl 8) or b0
+                } else {
+                    (b0 shl 8) or b1
+                }
+                if (signMode == SignMode.SIGNED) raw16.toShort().toLong() else raw16.toLong()
+            }
+            BitWidth.BITS_32 -> {
+                val b0 = buffer[offset].toLong() and 0xFF
+                val b1 = buffer[offset + 1].toLong() and 0xFF
+                val b2 = buffer[offset + 2].toLong() and 0xFF
+                val b3 = buffer[offset + 3].toLong() and 0xFF
+                val raw32 = if (byteOrder == ByteOrder.LITTLE_ENDIAN) {
+                    (b3 shl 24) or (b2 shl 16) or (b1 shl 8) or b0
+                } else {
+                    (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
+                }
+                if (signMode == SignMode.SIGNED) raw32.toInt().toLong() else raw32
+            }
+        }
     }
 
-    fun physicalToRaw(physicalValue: Double): Long {
-        if (factor == 0.0) return 0L
-        return Math.round((physicalValue - offset) / factor)
-    }
-
-    fun formatPhysical(physicalValue: Double): String {
-        return if (decimalPlaces <= 0) {
-            Math.round(physicalValue).toString()
-        } else {
-            String.format("%.${decimalPlaces}f", physicalValue)
+    fun writeRawValue(buffer: ByteArray, offset: Int, value: Long) {
+        if (offset + bitWidth.byteSize > buffer.size) return
+        
+        when (bitWidth) {
+            BitWidth.BITS_8 -> {
+                buffer[offset] = (value and 0xFF).toByte()
+            }
+            BitWidth.BITS_16 -> {
+                val b0 = (value and 0xFF).toByte()
+                val b1 = ((value shr 8) and 0xFF).toByte()
+                if (byteOrder == ByteOrder.LITTLE_ENDIAN) {
+                    buffer[offset] = b0
+                    buffer[offset + 1] = b1
+                } else {
+                    buffer[offset] = b1
+                    buffer[offset + 1] = b0
+                }
+            }
+            BitWidth.BITS_32 -> {
+                val b0 = (value and 0xFF).toByte()
+                val b1 = ((value shr 8) and 0xFF).toByte()
+                val b2 = ((value shr 16) and 0xFF).toByte()
+                val b3 = ((value shr 24) and 0xFF).toByte()
+                if (byteOrder == ByteOrder.LITTLE_ENDIAN) {
+                    buffer[offset] = b0
+                    buffer[offset + 1] = b1
+                    buffer[offset + 2] = b2
+                    buffer[offset + 3] = b3
+                } else {
+                    buffer[offset] = b3
+                    buffer[offset + 1] = b2
+                    buffer[offset + 2] = b1
+                    buffer[offset + 3] = b0
+                }
+            }
         }
     }
 }

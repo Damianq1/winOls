@@ -1,99 +1,68 @@
 package com.winols.app
 
 import com.winols.app.data.DataFormatterEngine
-import com.winols.app.model.CellDataType
-import com.winols.app.model.MapDefinition
+import com.winols.app.model.ConversionProfile
+import com.winols.app.model.DataRepresentation
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class DataRepresentationTest {
 
+    private val engine = DataFormatterEngine()
+
     @Test
-    fun testBoostPressureScaling() {
-        val map = MapDefinition(
-            id = "MAP_BOOST",
-            name = "Turbo Boost",
-            startAddress = 0x00,
-            rows = 1,
-            columns = 1,
-            dataType = CellDataType.UWORD,
-            factor = 0.01,
-            offset = 0.0,
-            decimals = 2
-        )
+    fun testFactor0_01() {
+        val profile = ConversionProfile(factor = 0.01, offset = 0.0, unit = "%")
+        val raw = 1000L
+        val physical = profile.rawToPhysical(raw)
+        
+        assertEquals(10.0, physical, 0.0001)
+        assertEquals("10.00 %", profile.formatPhysical(physical))
 
-        // RAW 250 -> 2.50 bar
-        val raw = 250
-        val physical = map.rawToPhysical(raw)
-        assertEquals(2.5, physical, 0.0001)
-
-        // 2.50 bar -> RAW 250
-        val rawCalculated = map.physicalToRaw(2.5)
-        assertEquals(250L, rawCalculated)
+        val convertedBack = profile.physicalToRaw(10.0, DataRepresentation.UWORD_LE)
+        assertEquals(1000L, convertedBack)
     }
 
     @Test
-    fun testTemperatureEcuScaling() {
-        val map = MapDefinition(
-            id = "MAP_COOLANT_TEMP",
-            name = "ECT Sensor",
-            startAddress = 0x00,
-            rows = 1,
-            columns = 1,
-            dataType = CellDataType.UBYTE,
-            factor = 0.25,
-            offset = -40.0,
-            decimals = 1
-        )
+    fun testBoschTemperatureFormula() {
+        // Formuła: (RAW * 0.25) - 40
+        val profile = ConversionProfile(factor = 0.25, offset = -40.0, unit = "°C", decimalPlaces = 1)
+        
+        // 0 RAW -> (0 * 0.25) - 40 = -40.0°C
+        assertEquals(-40.0, profile.rawToPhysical(0), 0.001)
 
-        // RAW 0 -> (0 * 0.25) - 40 = -40.0°C
-        assertEquals(-40.0, map.rawToPhysical(0), 0.0001)
+        // 160 RAW -> (160 * 0.25) - 40 = 0.0°C
+        assertEquals(0.0, profile.rawToPhysical(160), 0.001)
 
-        // RAW 160 -> (160 * 0.25) - 40 = 0.0°C
-        assertEquals(0.0, map.rawToPhysical(160), 0.0001)
+        // 255 RAW -> (255 * 0.25) - 40 = 23.75°C
+        assertEquals(23.75, profile.rawToPhysical(255), 0.001)
 
-        // RAW 520 -> (520 * 0.25) - 40 = 90.0°C
-        assertEquals(90.0, map.rawToPhysical(520), 0.0001)
-
-        // 90.0°C -> RAW: (90 - (-40)) / 0.25 = 130 / 0.25 = 520
-        // Dla UBYTE zostanie obcięte (clamped) do 255
-        val raw90 = map.physicalToRaw(90.0)
-        assertEquals(255L, raw90)
-
-        // 10.0°C -> (10 - (-40)) / 0.25 = 50 / 0.25 = 200 RAW
-        val raw10 = map.physicalToRaw(10.0)
-        assertEquals(200L, raw10)
+        // Odwrotna konwersja: 90°C (temperatura robocza silnika) -> (90 + 40) / 0.25 = 520 RAW
+        val rawFor90C = profile.physicalToRaw(90.0, DataRepresentation.UWORD_LE)
+        assertEquals(520L, rawFor90C)
     }
 
     @Test
-    fun testBufferRoundTrip() {
-        val buffer = ByteBuffer.allocateDirect(16)
-        val map = MapDefinition(
-            id = "MAP_INJ",
-            name = "Injection",
-            startAddress = 0x02,
-            rows = 2,
-            columns = 2,
-            dataType = CellDataType.UWORD,
-            byteOrder = ByteOrder.LITTLE_ENDIAN,
-            factor = 0.01,
-            offset = 0.0
-        )
+    fun testBufferReadWriteClamping() {
+        val buffer = ByteBuffer.allocate(4)
+        val profile = ConversionProfile.TEMPERATURE_BOSCH
 
-        // Macierz wejściowa w jednostkach fizycznych
-        val originalPhysical = arrayOf(
-            doubleArrayOf(12.50, 25.00),
-            doubleArrayOf(37.50, 50.00)
-        )
+        // Zapisujemy 100°C do komórki 8-bitowej unsigned (zakres RAW: 0..255)
+        // (100 + 40) / 0.25 = 560 RAW -> powinno zostać przycięte do 255
+        engine.writePhysicalValue(buffer, 0, 100.0, DataRepresentation.UBYTE, profile)
+        val readPhysical = engine.readPhysicalValue(buffer, 0, DataRepresentation.UBYTE, profile)
 
-        DataFormatterEngine.applyPhysicalMatrix(buffer, map, originalPhysical)
-        val extractedPhysical = DataFormatterEngine.extractPhysicalMatrix(buffer, map)
+        // 255 RAW to 23.75°C
+        assertEquals(23.75, readPhysical, 0.001)
+    }
 
-        assertEquals(12.50, extractedPhysical[0][0], 0.001)
-        assertEquals(25.00, extractedPhysical[0][1], 0.001)
-        assertEquals(37.50, extractedPhysical[1][0], 0.001)
-        assertEquals(50.00, extractedPhysical[1][1], 0.001)
+    @Test
+    fun testParseFormulaString() {
+        val parsedProfile = engine.parseFormula("(x * 0.25) - 40", unit = "°C", decimalPlaces = 1)
+        assertEquals(0.25, parsedProfile.factor, 0.0001)
+        assertEquals(-40.0, parsedProfile.offset, 0.0001)
+        assertEquals("°C", parsedProfile.unit)
+        assertEquals(1, parsedProfile.decimalPlaces)
     }
 }

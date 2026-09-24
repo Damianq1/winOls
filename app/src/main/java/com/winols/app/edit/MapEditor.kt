@@ -1,106 +1,142 @@
 package com.winols.app.edit
 
 import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.DataRepresentation
 import com.winols.app.model.MapDefinition
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.util.ArrayDeque
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.roundToInt
 
 class MapEditor(private val bufferManager: BinaryBufferManager) {
 
-    private data class UndoStep(val startAddress: Int, val oldBytes: ByteArray)
-    private val undoStack = ArrayDeque<UndoStep>()
-
     enum class OperationType {
         ADD_OFFSET,
-        MULTIPLY_PERCENT,
+        PERCENT_MULTIPLY,
         SET_CONSTANT,
         SMOOTH
     }
 
-    suspend fun applyOperation(
+    fun readMapValues(mapDef: MapDefinition): DoubleArray {
+        val totalElements = mapDef.rows * mapDef.cols
+        val byteStep = mapDef.dataRepresentation.byteSize
+        val rawBytes = bufferManager.getBlock(mapDef.startAddress, totalElements * byteStep)
+        val byteBuf = ByteBuffer.wrap(rawBytes).order(mapDef.dataRepresentation.byteOrder)
+        val values = DoubleArray(totalElements)
+
+        for (i in 0 until totalElements) {
+            val raw = when (mapDef.dataRepresentation) {
+                DataRepresentation.UBYTE -> (byteBuf.get().toInt() and 0xFF).toDouble()
+                DataRepresentation.SBYTE -> byteBuf.get().toDouble()
+                DataRepresentation.UWORD_LE, DataRepresentation.UWORD_BE -> (byteBuf.short.toInt() and 0xFFFF).toDouble()
+                DataRepresentation.SWORD_LE, DataRepresentation.SWORD_BE -> byteBuf.short.toDouble()
+                DataRepresentation.ULONG_LE, DataRepresentation.ULONG_BE -> (byteBuf.int.toLong() and 0xFFFFFFFFL).toDouble()
+                DataRepresentation.SLONG_LE, DataRepresentation.SLONG_BE -> byteBuf.int.toDouble()
+            }
+            values[i] = (raw * mapDef.factor) + mapDef.offset
+        }
+        return values
+    }
+
+    fun applyOperation(
         mapDef: MapDefinition,
-        selectedCells: List<Pair<Int, Int>>? = null,
-        type: OperationType,
-        value: Double
-    ) = withContext(Dispatchers.Default) {
-        val bytesPerCell = mapDef.representation.bitDepth.bytesPerElement
-        val totalSize = mapDef.sizeInBytes
-        val originalData = bufferManager.readBlock(mapDef.startAddress, totalSize)
-        undoStack.push(UndoStep(mapDef.startAddress, originalData))
+        opType: OperationType,
+        operand: Double,
+        selectionMask: BooleanArray? = null
+    ) {
+        val currentValues = readMapValues(mapDef)
+        val totalElements = mapDef.rows * mapDef.cols
+        val updatedValues = DoubleArray(totalElements)
 
-        val matrix = Array(mapDef.rows) { DoubleArray(mapDef.columns) }
-        val targetIndices = selectedCells ?: (0 until mapDef.rows).flatMap { r ->
-            (0 until mapDef.columns).map { c -> Pair(r, c) }
+        for (i in 0 until totalElements) {
+            val isSelected = selectionMask?.getOrNull(i) ?: true
+            if (!isSelected) {
+                updatedValues[i] = currentValues[i]
+                continue
+            }
+
+            updatedValues[i] = when (opType) {
+                OperationType.ADD_OFFSET -> currentValues[i] + operand
+                OperationType.PERCENT_MULTIPLY -> currentValues[i] * (1.0 + (operand / 100.0))
+                OperationType.SET_CONSTANT -> operand
+                OperationType.SMOOTH -> currentValues[i]
+            }
         }
 
-        for (r in 0 until mapDef.rows) {
-            for (c in 0 until mapDef.columns) {
-                val offset = (r * mapDef.columns + c) * bytesPerCell
-                val raw = bufferManager.readRawValue(mapDef.startAddress + offset, mapDef.representation)
-                matrix[r][c] = mapDef.representation.rawToPhysical(raw)
-            }
+        if (opType == OperationType.SMOOTH) {
+            apply3x3Smoothing(currentValues, updatedValues, mapDef.rows, mapDef.cols, operand.coerceIn(0.0, 1.0), selectionMask)
         }
 
-        when (type) {
-            OperationType.ADD_OFFSET -> {
-                for ((r, c) in targetIndices) {
-                    matrix[r][c] += value
-                }
-            }
-            OperationType.MULTIPLY_PERCENT -> {
-                val factor = 1.0 + (value / 100.0)
-                for ((r, c) in targetIndices) {
-                    matrix[r][c] *= factor
-                }
-            }
-            OperationType.SET_CONSTANT -> {
-                for ((r, c) in targetIndices) {
-                    matrix[r][c] = value
-                }
-            }
-            OperationType.SMOOTH -> {
-                val temp = Array(mapDef.rows) { r -> matrix[r].clone() }
-                val targetSet = targetIndices.toSet()
-                val weight = Math.max(0.0, Math.min(1.0, value))
-                
-                for ((r, c) in targetIndices) {
-                    var sum = 0.0
-                    var count = 0
-                    for (dr in -1..1) {
-                        for (dc in -1..1) {
-                            val nr = r + dr
-                            val nc = c + dc
-                            if (nr in 0 until mapDef.rows && nc in 0 until mapDef.columns && targetSet.contains(Pair(nr, nc))) {
-                                sum += temp[nr][nc]
-                                count++
-                            }
+        writeMapValues(mapDef, updatedValues)
+    }
+
+    private fun apply3x3Smoothing(
+        src: DoubleArray,
+        dst: DoubleArray,
+        rows: Int,
+        cols: Int,
+        factor: Double,
+        selectionMask: BooleanArray?
+    ) {
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val idx = r * cols + c
+                val isSelected = selectionMask?.getOrNull(idx) ?: true
+                if (!isSelected) continue
+
+                var sum = 0.0
+                var count = 0
+                for (dr in -1..1) {
+                    for (dc in -1..1) {
+                        val nr = r + dr
+                        val nc = c + dc
+                        if (nr in 0 until rows && nc in 0 until cols) {
+                            sum += src[nr * cols + nc]
+                            count++
                         }
                     }
-                    if (count > 0) {
-                        val average = sum / count
-                        matrix[r][c] = (temp[r][c] * (1.0 - weight)) + (average * weight)
-                    }
+                }
+                val avg = sum / count
+                dst[idx] = src[idx] * (1.0 - factor) + (avg * factor)
+            }
+        }
+    }
+
+    private fun writeMapValues(mapDef: MapDefinition, values: DoubleArray) {
+        val totalElements = mapDef.rows * mapDef.cols
+        val byteStep = mapDef.dataRepresentation.byteSize
+        val targetBytes = ByteArray(totalElements * byteStep)
+        val byteBuf = ByteBuffer.wrap(targetBytes).order(mapDef.dataRepresentation.byteOrder)
+
+        for (i in 0 until totalElements) {
+            val unscaled = (values[i] - mapDef.offset) / mapDef.factor
+            when (mapDef.dataRepresentation) {
+                DataRepresentation.UBYTE -> {
+                    val clamped = unscaled.roundToInt().coerceIn(0, 0xFF)
+                    byteBuf.put(clamped.toByte())
+                }
+                DataRepresentation.SBYTE -> {
+                    val clamped = unscaled.roundToInt().coerceIn(-128, 127)
+                    byteBuf.put(clamped.toByte())
+                }
+                DataRepresentation.UWORD_LE, DataRepresentation.UWORD_BE -> {
+                    val clamped = unscaled.roundToInt().coerceIn(0, 0xFFFF)
+                    byteBuf.putShort(clamped.toShort())
+                }
+                DataRepresentation.SWORD_LE, DataRepresentation.SWORD_BE -> {
+                    val clamped = unscaled.roundToInt().coerceIn(-32768, 32767)
+                    byteBuf.putShort(clamped.toShort())
+                }
+                DataRepresentation.ULONG_LE, DataRepresentation.ULONG_BE -> {
+                    val clamped = unscaled.toLong().coerceIn(0L, 0xFFFFFFFFL)
+                    byteBuf.putInt(clamped.toInt())
+                }
+                DataRepresentation.SLONG_LE, DataRepresentation.SLONG_BE -> {
+                    val clamped = unscaled.toLong().coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong())
+                    byteBuf.putInt(clamped.toInt())
                 }
             }
         }
 
-        for (r in 0 until mapDef.rows) {
-            for (c in 0 until mapDef.columns) {
-                val offset = (r * mapDef.columns + c) * bytesPerCell
-                val newRaw = mapDef.representation.physicalToRaw(matrix[r][c])
-                bufferManager.writeRawValue(mapDef.startAddress + offset, newRaw, mapDef.representation)
-            }
-        }
+        bufferManager.putBlock(mapDef.startAddress, targetBytes, trackUndo = true)
     }
-
-    suspend fun undo(): Boolean = withContext(Dispatchers.Default) {
-        if (undoStack.isEmpty()) return@withContext false
-        val step = undoStack.pop()
-        bufferManager.writeBlock(step.startAddress, step.oldBytes)
-        true
-    }
-
-    val canUndo: Boolean
-        get() = undoStack.isNotEmpty()
 }

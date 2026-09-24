@@ -1,72 +1,69 @@
 package com.winols.app.engine
 
-import com.winols.app.data.BinaryBufferManager
 import com.winols.app.model.AxisDefinition
-import com.winols.app.model.BitDepth
-import com.winols.app.model.DataRepresentation
+import com.winols.app.model.DataType
 import com.winols.app.model.MapDefinition
-import com.winols.app.model.ValueType
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-class MapFinderEngine(private val bufferManager: BinaryBufferManager) {
+class MapFinderEngine {
 
-    suspend fun scanPotentialMaps(): List<MapDefinition> = withContext(Dispatchers.Default) {
-        val detected = mutableListOf<MapDefinition>()
-        val totalBytes = bufferManager.capacity
-        if (totalBytes < 32) return@withContext detected
+    /**
+     * Wyszukuje charakterystyczne nagłówki osi (np. Bosch 16-bit: identyfikator osi, długość, punkty pracy).
+     */
+    fun scanForPotentialMaps(buffer: ByteArray, minRows: Int = 4, maxRows: Int = 32, minCols: Int = 4, maxCols: Int = 32): List<MapDefinition> {
+        val detectedMaps = mutableListOf<MapDefinition>()
+        val maxOffset = buffer.size - 64
 
-        var address = 0
-        val rep16 = DataRepresentation(BitDepth.BITS_16, ValueType.UNSIGNED, ByteOrder.LITTLE_ENDIAN)
+        var i = 0
+        while (i < maxOffset) {
+            val rows = buffer[i].toInt() and 0xFF
+            val cols = buffer[i + 1].toInt() and 0xFF
 
-        while (address < totalBytes - 32) {
-            val potentialCols = bufferManager.readRawValue(address, rep16).toInt()
-            val potentialRows = bufferManager.readRawValue(address + 2, rep16).toInt()
+            if (rows in minRows..maxRows && cols in minCols..maxCols) {
+                val dataSize = rows * cols * 2
+                val mapStart = i + 2
 
-            if (potentialCols in 4..32 && potentialRows in 4..32) {
-                val mapSize = potentialCols * potentialRows * 2
-                val mapStart = address + 4
-
-                if (mapStart + mapSize <= totalBytes) {
-                    if (isMonotonicSequence(mapStart, potentialCols, rep16)) {
-                        val xAxis = AxisDefinition(
-                            startAddress = mapStart,
-                            length = potentialCols,
-                            representation = rep16
-                        )
-                        val actualMapStart = mapStart + (potentialCols * 2)
-                        if (actualMapStart + mapSize <= totalBytes) {
-                            detected.add(
-                                MapDefinition(
-                                    id = "MAP_0x${Integer.toHexString(actualMapStart).uppercase()}",
-                                    name = "Candidate ${potentialCols}x${potentialRows}",
-                                    startAddress = actualMapStart,
-                                    rows = potentialRows,
-                                    columns = potentialCols,
-                                    representation = rep16,
-                                    xAxis = xAxis,
-                                    confidence = 0.85
-                                )
-                            )
-                            address = actualMapStart + mapSize
-                            continue
-                        }
-                    }
+                if (mapStart + dataSize <= buffer.size && isDataPlausible(buffer, mapStart, rows, cols)) {
+                    val mapDef = MapDefinition(
+                        id = "MAP_${Integer.toHexString(mapStart).uppercase()}",
+                        name = "Potential Map ${rows}x${cols} @ 0x${Integer.toHexString(mapStart).uppercase()}",
+                        startAddress = mapStart.toLong(),
+                        rows = rows,
+                        columns = cols,
+                        dataType = DataType.UWORD_LE,
+                        xAxis = AxisDefinition("X-Axis", length = cols),
+                        yAxis = AxisDefinition("Y-Axis", length = rows)
+                    )
+                    detectedMaps.add(mapDef)
+                    i += dataSize
                 }
             }
-            address += 2
+            i += 2
         }
-        detected
+        return detectedMaps
     }
 
-    private fun isMonotonicSequence(address: Int, length: Int, rep: DataRepresentation): Boolean {
-        var lastVal = -1L
-        for (i in 0 until length) {
-            val v = bufferManager.readRawValue(address + (i * rep.bitDepth.bytesPerElement), rep)
-            if (v <= lastVal) return false
-            lastVal = v
+    private fun isDataPlausible(buffer: ByteArray, start: Int, rows: Int, cols: Int): Boolean {
+        var nonZeroCount = 0
+        var monotonicTrends = 0
+        val totalElements = rows * cols
+        var previousVal = -1
+
+        val bb = ByteBuffer.wrap(buffer, start, totalElements * 2).order(ByteOrder.LITTLE_ENDIAN)
+
+        for (idx in 0 until totalElements) {
+            val value = bb.short.toInt() and 0xFFFF
+            if (value > 0) nonZeroCount++
+            if (previousVal != -1 && value >= previousVal) {
+                monotonicTrends++
+            }
+            previousVal = value
         }
-        return true
+
+        val nonZeroRatio = nonZeroCount.toDouble() / totalElements
+        val monotonicRatio = monotonicTrends.toDouble() / totalElements
+
+        return nonZeroRatio > 0.40 && (monotonicRatio > 0.35 || nonZeroRatio > 0.85)
     }
 }

@@ -1,28 +1,43 @@
 package com.winols.app.model
 
+enum class DataType(val byteSize: Int) {
+    UBYTE(1),
+    SBYTE(1),
+    UWORD_LE(2),
+    SWORD_LE(2),
+    UWORD_BE(2),
+    SWORD_BE(2),
+    UDWORD_LE(4),
+    SDWORD_LE(4),
+    UDWORD_BE(4),
+    SDWORD_BE(4)
+}
+
 data class AxisDefinition(
-    val startAddress: Int = 0,
-    val length: Int = 0,
-    val isInline: Boolean = false,
-    val representation: DataRepresentation = DataRepresentation(),
-    val id: String = "",
-    val unit: String = ""
+    val name: String,
+    val unit: String = "",
+    val address: Long = 0L,
+    val length: Int = 1,
+    val dataType: DataType = DataType.UWORD_LE,
+    val factor: Double = 1.0,
+    val offset: Double = 0.0,
+    val manualValues: List<Double>? = null
 )
 
 data class MapDefinition(
     val id: String,
     val name: String,
-    val startAddress: Int,
+    val startAddress: Long,
     val rows: Int,
     val columns: Int,
-    val representation: DataRepresentation = DataRepresentation(),
+    val dataType: DataType = DataType.UWORD_LE,
+    val factor: Double = 1.0,
+    val offset: Double = 0.0,
+    val unit: String = "",
     val xAxis: AxisDefinition? = null,
     val yAxis: AxisDefinition? = null,
-    val confidence: Double = 1.0
+    val category: String = "Engine"
 ) {
-    val totalElements: Int
-        get() = rows * columns
-
     val sizeInBytes: Int
-        get() = totalElements * representation.bitDepth.bytesPerElement
+        get() = rows * columns * dataType.byteSize
 }

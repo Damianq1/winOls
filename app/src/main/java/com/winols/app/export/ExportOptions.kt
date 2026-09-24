@@ -6,14 +6,14 @@ enum class ExportFormat {
 }
 
 enum class ValueMode {
-    PHYSICAL, // Przeliczone: RAW * factor + offset
-    RAW       // Surowe bity z bufora
+    PHYSICAL,   // Po przeliczeniu (Factor / Offset)
+    RAW         // Surowe bajty / liczby całkowite
 }
 
-data class ExportOptions(
-    val format: ExportFormat = ExportFormat.XLSX,
+data class ExportConfig(
+    val format: ExportFormat = ExportFormat.CSV,
     val valueMode: ValueMode = ValueMode.PHYSICAL,
-    val includeDifferenceTable: Boolean = true,
-    val includeDeltaPercentage: Boolean = true,
-    val decimalPrecision: Int = 2
+    val includeDelta: Boolean = true,
+    val decimalPlaces: Int = 2,
+    val csvDelimiter: String = ";"
 )

@@ -4,7 +4,8 @@ import subprocess
 import asyncio
 import time
 import re
-from datetime import datetime
+import urllib.request
+import json
 from pathlib import Path
 from loguru import logger
 from gemini_webapi import GeminiClient
@@ -12,25 +13,25 @@ from gemini_webapi import GeminiClient
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
+from rich.live import Live
 
 from project_tracker import ProjectTracker
 
 PROJECT_DIR = Path("/storage/emulated/0/Rozne/WinOls")
+GITHUB_REPO_API = "https://api.github.com/repos/Damianq1/winOls/actions/runs?per_page=1"
 
-console = Console()
+console = Console(force_terminal=True)
 tracker = ProjectTracker()
 
 logger.remove()
 logger.add(sys.stderr, level="ERROR", format="{time:HH:mm:ss} | <level>{level}</level> | {message}")
 
 def ensure_valid_cwd():
-    """Wymusza poprawne uprawnienia i ustawia katalog roboczy Termuxa."""
     try:
         if not PROJECT_DIR.exists():
             PROJECT_DIR.mkdir(parents=True, exist_ok=True)
         os.chdir(PROJECT_DIR)
-    except Exception as e:
-        # Awaryjne odświeżenie uprawnień pamięci w Termuxie
+    except Exception:
         try:
             subprocess.run(["termux-setup-storage"], capture_output=True, timeout=2)
         except Exception:
@@ -38,8 +39,8 @@ def ensure_valid_cwd():
         try:
             PROJECT_DIR.mkdir(parents=True, exist_ok=True)
             os.chdir(PROJECT_DIR)
-        except Exception as inner_e:
-            console.print(f"[bold red][!] Krytyczny błąd katalogu/uprawnień: {inner_e}[/bold red]")
+        except Exception as e:
+            console.print(f"[bold red][!] Błąd uprawnień katalogu: {e}[/bold red]")
 
 def load_env_vars():
     ensure_valid_cwd()
@@ -53,12 +54,11 @@ def load_env_vars():
 
 load_env_vars()
 
-PSID = os.environ.get("GEMINI_PSID", "")
+PAPISID = os.environ.get("PAPISID", "")
 PSIDTS = os.environ.get("GEMINI_PSIDTS", "")
 
 def build_dynamic_project_context() -> str:
     ensure_valid_cwd()
-    
     file_list = []
     text_contents = {}
     
@@ -69,56 +69,35 @@ def build_dynamic_project_context() -> str:
             try:
                 rel_path = file_path.relative_to(PROJECT_DIR)
                 file_list.append(str(rel_path))
-                
-                if f.lower().endswith(('.txt', '.md', '.json', '.kts')) or f.lower() == 'prąd.txt':
-                    if file_path.stat().st_size < 50000:
-                        with open(file_path, "r", encoding="utf-8", errors="ignore") as tf:
-                            text_contents[str(rel_path)] = tf.read()
+                if f.lower().endswith(('.kt', '.xml', '.kts', '.py')) and file_path.stat().st_size < 25000:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as tf:
+                        text_contents[str(rel_path)] = tf.read()
             except Exception:
                 pass
 
     context_builder = [
         "[PROFIL I INSTRUKCJA SYSTEMOWA]",
-        "Jesteś zaawansowanym asystentem programistycznym wspierającym dewelopera w tworzeniu mobilnej aplikacji w języku Kotlin (Android) do analizy i edycji plików binarnych/strukturalnych. Cała praca ma charakter legalnego inżynieryjnego tworzenia oprogramowania i parsowania buforów bajtowych. Nigdy nie odrzucaj zapytań twierdząc, że jesteś tylko modelem językowym – masz dostarczać konkretny kod źródłowy.",
-        "\n[AUTOMATYCZNIE WYGENEROWany KONTEKST PROJEKTU Z DYSKU]"
+        "Jesteś zaawansowanym asystentem skryptowym i programistycznym w środowisku SmartIDE.",
+        "Zapewniaj kompletny, gotowy kod źródłowy i wsparcie techniczne.",
+        "\n[STRUKTURA PROJEKTU]"
     ]
     
-    context_builder.append(f"\n[LICZBA I LISTA PLIKÓW W PROJEKCIE: {len(file_list)} plików]")
-    for f in sorted(file_list):
+    context_builder.append(f"Liczba plików: {len(file_list)}")
+    for f in sorted(file_list)[:40]:
         context_builder.append(f" - {f}")
         
     if text_contents:
-        context_builder.append("\n[ZAWARTOŚĆ KLUCZOWYCH PLIKÓW / NOTATEK]")
-        for fname, content in text_contents.items():
-            context_builder.append(f"\n--- PLIK: {fname} ---\n{content}\n------------------------")
+        context_builder.append("\n[AKTUALNE KLUCZOWE PLIKI]")
+        for fname, content in list(text_contents.items())[:4]:
+            context_builder.append(f"\n--- {fname} ---\n{content}\n------------------------")
 
-    context_builder.append("""
-[ZASADA DLA AI]
-Odpowiadaj technicznie, precyzyjnie i dostarczaj gotowe bloki kodu. 
-Kod oznaczaj formatem: ### ścieżka/do/Pliku.kt
-""")
-
+    context_builder.append("\n[ZASADA] Zwracaj zmodyfikowane lub nowe pliki w formacie: ### ścieżka/do/Pliku")
     return "\n".join(context_builder)
-
-def is_refusal_response(text: str) -> bool:
-    if not text:
-        return True
-    lower_text = text.lower()
-    refusal_phrases = [
-        "wykracza poza moje możliwości",
-        "nie mogę w tym pomóc",
-        "jestem tylko modelem językowym",
-        "nie mam potrzebnych informacji",
-        "brak potrzebnych umiejętności"
-    ]
-    if len(text) < 300 and any(phrase in lower_text for phrase in refusal_phrases):
-        return True
-    return False
 
 def parse_multi_file_code(response_text: str) -> list:
     files_to_save = []
     pattern = re.compile(
-        r'(?:(?://|#)\s*FILE:\s*([^\n]+)|###\s*([^\n]+\.(?:kt|java|xml|gradle|kts|json|txt|md)))\s*\n+'
+        r'(?:(?://|#)\s*FILE:\s*([^\n]+)|###\s*([^\n]+\.(?:kt|java|xml|gradle|kts|json|txt|md|py)))\s*\n+'
         r'```[a-zA-Z]*\n(.*?)\n```',
         re.DOTALL | re.IGNORECASE
     )
@@ -130,7 +109,7 @@ def parse_multi_file_code(response_text: str) -> list:
             files_to_save.append((file_path, file_content))
             
     if not files_to_save:
-        code_block_pattern = re.compile(r'([a-zA-Z0-9_\-/\.]+\.(?:kt|java|xml|gradle|kts))\s*\n\s*```[a-zA-Z]*\n(.*?)\n```', re.DOTALL)
+        code_block_pattern = re.compile(r'([a-zA-Z0-9_\-/\.]+\.(?:kt|java|xml|gradle|kts|py))\s*\n\s*```[a-zA-Z]*\n(.*?)\n```', re.DOTALL)
         fallback_matches = code_block_pattern.findall(response_text)
         for f_path, content in fallback_matches:
             files_to_save.append((f_path.strip(), content))
@@ -145,49 +124,64 @@ def apply_file_changes(parsed_files):
         target_file.parent.mkdir(parents=True, exist_ok=True)
         with open(target_file, "w", encoding="utf-8") as f:
             f.write(content)
-        console.print(f"[bold green][+] Zapisano lokalnie plik: {clean_path}[/bold green]")
+        console.print(f"[bold green][+] Zaktualizowano lokalnie: {clean_path}[/bold green]")
 
-def safe_git_sync():
+def git_sync_and_check():
     ensure_valid_cwd()
-    git_dir = PROJECT_DIR / ".git"
-    if not git_dir.exists():
-        console.print("[yellow][*] Katalog nie jest repozytorium Git (pomijam auto-sync). Wykonaj 'git init'.[/yellow]")
-        return
+    console.print("\n[bold cyan][*] Synchronizacja zmian z GitHubem...[/bold cyan]")
     try:
-        status_res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
-        if not status_res.stdout.strip():
-            console.print("[yellow][*] Git nie widzi żadnych zmian na dysku do zatwierdzenia.[/yellow]")
-            return
-
-        subprocess.run(["git", "add", "-A"], capture_output=True, check=True)
-        commit_res = subprocess.run(["git", "commit", "-m", f"Auto sync {datetime.now().strftime('%H:%M:%S')}"], capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(PROJECT_DIR), "add", "."], capture_output=True, text=True, check=True)
         
-        if commit_res.returncode == 0:
-            push_res = subprocess.run(["git", "push", "origin", "main"], capture_output=True, text=True)
-            if push_res.returncode != 0:
-                subprocess.run(["git", "push", "origin", "master"], capture_output=True)
-            console.print("[bold green][+] Zsynchronizowano z GitHub![/bold green]")
+        status_res = subprocess.run(["git", "-C", str(PROJECT_DIR), "status", "--porcelain"], capture_output=True, text=True)
+        if status_res.stdout.strip():
+            subprocess.run(["git", "-C", str(PROJECT_DIR), "commit", "-m", "Auto-update via Gemini Assistant"], capture_output=True, text=True, check=True)
+            push_res = subprocess.run(["git", "-C", str(PROJECT_DIR), "push"], capture_output=True, text=True)
+            if push_res.returncode == 0:
+                console.print("[bold green][ok] Pomyślnie wypchnięto zmiany do GitHub.[/bold green]")
+            else:
+                console.print(f"[bold red][!] Błąd git push: {push_res.stderr.strip()}[/bold red]")
         else:
-            console.print(f"[yellow][*] Commit pominięty: {commit_res.stdout.strip()}[/yellow]")
+            console.print("[dim cyan][*] Brak nowych zmian do zatwierdzenia w Git.[/dim cyan]")
+
+        console.print("[bold cyan][*] Sprawdzanie statusu GitHub Actions...[/bold cyan]")
+        req = urllib.request.Request(
+            GITHUB_REPO_API,
+            headers={"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            runs = data.get("workflow_runs", [])
+            if runs:
+                latest = runs[0]
+                status = latest.get("status")
+                conclusion = latest.get("conclusion")
+                res_color = "green" if conclusion == "success" else ("yellow" if status == "in_progress" else "red")
+                console.print(f"[{res_color}][ok] GitHub Actions -> Status: {status} | Wynik: {conclusion}[/{res_color}]")
+            else:
+                console.print("[dim cyan][*] Brak historii akcji GitHub.[/dim cyan]")
+
     except Exception as e:
-        console.print(f"[yellow][*] Błąd synchronizacji Git: {e}[/yellow]")
+        console.print(f"[bold red][!] Błąd podczas synchronizacji z GitHubem: {e}[/bold red]")
 
 async def main():
-    if not PSID or not PSIDTS:
-        console.print("[bold red][-] Brak ciasteczek w pliku .env![/bold red]")
-        return
-
     ensure_valid_cwd()
-    client = GeminiClient(PSID, PSIDTS)
-    await client.init()
-
+    
     console.clear()
     console.print(Panel.fit(
-        "[bold green]Asystent WinOLS Android - Tryb z wymuszaniem uprawnień Termux[/bold green]\n"
-        f"Katalog roboczy: {PROJECT_DIR}\n"
-        "Status: Zabezpieczenie ścieżki i uprawnień aktywne.",
+        "[bold green]Asystent Techniczny - Tryb Pro (PAPISID + Git Sync)[/bold green]\n"
+        f"Katalog roboczy: [cyan]{PROJECT_DIR}[/cyan]",
         border_style="green"
     ))
+
+    console.print("[bold cyan][*] Inicjalizacja sesji z użyciem PAPISID...[/bold cyan]")
+    try:
+        client = GeminiClient(secure_1psid=PAPISID, secure_1psidts=PSIDTS)
+        await client.init()
+        chat = client.start_chat()
+        console.print("[bold green][ok] Połączenie z kontem Pro ustanowione.[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red][!] Błąd inicjalizacji: {e}[/bold red]")
+        return
 
     while True:
         try:
@@ -196,46 +190,38 @@ async def main():
 
             if user_input.lower() in ["exit", "quit", "q"]:
                 break
-            if not user_input:
-                continue
 
-            if user_input.lower() in ["c", "commit"]:
-                safe_git_sync()
+            if not user_input:
                 continue
 
             dynamic_context = build_dynamic_project_context()
             full_prompt = f"{dynamic_context}\n\nZADANIE UŻYTKOWNIKA:\n{user_input}"
 
             response_text = ""
-            max_retries = 3
             success = False
+            start_time = time.time()
 
-            for attempt in range(1, max_retries + 1):
-                start_time = time.time()
-                console.print(f"[cyan][*] Skanowanie dysku i wysyłanie zapytania do Gemini (próba {attempt}/{max_retries})...[/cyan]")
+            # Pętla z licznikiem czasu na żywo w kolorze
+            async def send_task():
+                nonlocal response_text, success
+                response = await chat.send_message(full_prompt)
+                response_text = response.text if hasattr(response, "text") else str(response)
+                success = True
 
-                try:
-                    response = await client.generate_content(full_prompt)
-                    raw_text = response.text if hasattr(response, "text") else str(response)
+            task = asyncio.create_task(send_task())
+
+            with Live(console=console, refresh_per_second=4) as live:
+                while not task.done():
                     elapsed = time.time() - start_time
+                    live.update(f"[bold cyan][*] Wysyłanie zapytania przez sesję Pro... [yellow]({elapsed:.1f}s)[/yellow][/bold cyan]")
+                    await asyncio.sleep(0.25)
 
-                    if is_refusal_response(raw_text):
-                        console.print(f"[yellow][!] Wykryto blokadę/odmowę modelu w próbie {attempt}. Ponawiam...[/yellow]")
-                        await asyncio.sleep(2)
-                        continue
-                    else:
-                        response_text = raw_text
-                        success = True
-                        console.print(f"[dim green][ok] Odpowiedź odebrana w {elapsed:.2f} s[/dim green]")
-                        break
-
-                except Exception as api_err:
-                    elapsed = time.time() - start_time
-                    console.print(f"[yellow][!] Błąd połączenia w próbie {attempt}: {api_err}. Ponawiam...[/yellow]")
-                    await asyncio.sleep(2)
-
-            if not success or not response_text:
-                console.print("\n[bold red][-] Nie udało się uzyskać prawidłowej odpowiedzi po kilku próbach.[/bold red]")
+            elapsed = time.time() - start_time
+            if success:
+                console.print(f"[bold green][ok] Odpowiedź odebrana w {elapsed:.2f} s[/bold green]")
+            else:
+                if task.exception():
+                    console.print(f"[bold red][!] Błąd zapytania po {elapsed:.1f}s: {task.exception()}[/bold red]")
                 continue
 
             if response_text:
@@ -244,17 +230,14 @@ async def main():
 
                 parsed_files = parse_multi_file_code(response_text)
                 if parsed_files:
-                    console.print(f"\n[bold yellow][*] Wykryto {len(parsed_files)} plik(i) do zapisu:[/bold yellow]")
+                    console.print(f"\n[bold yellow][*] Wykryto {len(parsed_files)} plik(i) do automatycznego zapisu:[/bold yellow]")
                     apply_file_changes(parsed_files)
+                    console.print("[bold green][ok] Pliki wdrożone w projekcie.[/bold green]")
                     
-                    console.print("[bold yellow][*] Automatyczny sync z GitHub w tle...[/bold yellow]")
-                    safe_git_sync()
-                else:
-                    if "push" in user_input.lower() or "git" in user_input.lower():
-                        safe_git_sync()
+                    git_sync_and_check()
 
         except KeyboardInterrupt:
-            console.print("\n[bold red]Przerwano.[/bold red]")
+            console.print("\n[bold yellow][*] Zatrzymano przez użytkownika.[/bold yellow]")
             break
         except Exception as e:
             ensure_valid_cwd()

@@ -1,21 +1,97 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout android:background="#0F172A" android:layout_height="wrap_content" android:layout_width="match_parent" android:orientation="vertical" android:padding="20dp" xmlns:android="[http://schemas.android.com/apk/res/android](http://schemas.android.com/apk/res/android)">
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp"
+    android:background="#21252B">
 
-    <TextView android:id="@+id/tvBulkTitle" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Masowa Edycja Komórek" android:textColor="#F8FAFC" android:textSize="18sp" android:textStyle="bold"/>
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Masowa Edycja Komórek"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:textColor="#ECEFF4"
+        android:layout_marginBottom="16dp" />
 
-    <RadioGroup android:id="@+id/rgOperations" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:layout_width="match_parent">
+    <RadioGroup
+        android:id="@+id/rgOperations"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
 
-        <RadioButton android:checked="true" android:id="@+id/rbAdd" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Dodaj wartość (+)" android:textColor="#E2E8F0"/>
+        <RadioButton
+            android:id="@+id/rbAdd"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Dodaj stałą (+)"
+            android:textColor="#ECEFF4"
+            android:checked="true" />
 
-        <RadioButton android:id="@+id/rbSubtract" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Odejmij wartość (-)" android:textColor="#E2E8F0"/>
+        <RadioButton
+            android:id="@+id/rbSubtract"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Odejmij stałą (-)"
+            android:textColor="#ECEFF4" />
 
-        <RadioButton android:id="@+id/rbPercent" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Zmiana procentowa (%)" android:textColor="#E2E8F0"/>
+        <RadioButton
+            android:id="@+id/rbPercentage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Zmień procentowo (%)"
+            android:textColor="#ECEFF4" />
 
-        <RadioButton android:id="@+id/rbConstant" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Wklej stałą wartość (=)" android:textColor="#E2E8F0"/>
+        <RadioButton
+            android:id="@+id/rbConstant"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Ustaw stałą wartość"
+            android:textColor="#ECEFF4" />
 
-        <RadioButton android:id="@+id/rbSmooth" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Wygładzanie 3x3 (Smooth)" android:textColor="#E2E8F0"/>
+        <RadioButton
+            android:id="@+id/rbSmooth"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Wygładź (Smoothing 0.0 - 1.0)"
+            android:textColor="#ECEFF4" />
+
+        <RadioButton
+            android:id="@+id/rbInterpolate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Interpolacja narożna (Bilinear)"
+            android:textColor="#ECEFF4" />
     </RadioGroup>
 
-    <EditText android:background="#1E293B" android:hint="Wartość (np. 10.5 lub 5%)" android:id="@+id/etParamValue" android:inputType="numberDecimal|numberSigned" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:layout_width="match_parent" android:padding="12dp" android:textColor="#FFFFFF" android:textColorHint="#64748B"/>
+    <EditText
+        android:id="@+id/etOperandValue"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:inputType="numberDecimal|numberSigned"
+        android:hint="Wartość / Procent / Współczynnik"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#7F848E"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="16dp" />
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end">
+
+        <Button
+            android:id="@+id/btnCancelBulk"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Anuluj"
+            android:layout_marginEnd="8dp" />
+
+        <Button
+            android:id="@+id/btnApplyBulk"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Zastosuj" />
+    </LinearLayout>
 </LinearLayout>

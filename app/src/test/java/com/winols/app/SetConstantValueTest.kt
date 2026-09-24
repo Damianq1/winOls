@@ -5,65 +5,108 @@ import com.winols.app.edit.MapEditor
 import com.winols.app.model.DataRepresentation
 import com.winols.app.model.MapDefinition
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
-import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class SetConstantValueTest {
 
-    @Test
-    fun testSetConstantValueUint16WithFactor() {
-        // Bufor 64 bajty
-        val byteBuf = ByteBuffer.allocateDirect(64)
-        val manager = BinaryBufferManager(byteBuf)
-        val editor = MapEditor(manager)
+    private lateinit var bufferManager: BinaryBufferManager
+    private lateinit var editor: MapEditor
 
-        // Mapa 2x2, 16-bit LE, adres bazowy 0x00
-        // Physical = RAW * 0.25 - 40.0
-        // Chcemy wpisać stałą fizyczną = 80.0
-        // RAW = (80.0 - (-40.0)) / 0.25 = 120.0 / 0.25 = 480
-        val map = MapDefinition(
-            name = "DriversWish",
-            startAddress = 0,
-            rows = 2,
-            columns = 2,
-            representation = DataRepresentation.UINT16_LE,
-            factor = 0.25,
-            offset = -40.0
-        )
-
-        val affected = editor.setConstantValue(map, 80.0)
-
-        assertEquals(4, affected)
-        assertEquals(480L, manager.readValue(0, DataRepresentation.UINT16_LE))
-        assertEquals(480L, manager.readValue(2, DataRepresentation.UINT16_LE))
-        assertEquals(480L, manager.readValue(4, DataRepresentation.UINT16_LE))
-        assertEquals(480L, manager.readValue(6, DataRepresentation.UINT16_LE))
+    @Before
+    fun setUp() {
+        bufferManager = BinaryBufferManager(64)
+        editor = MapEditor(bufferManager)
     }
 
     @Test
-    fun testSetConstantValueSelectedCellsOnly() {
-        val byteBuf = ByteBuffer.allocateDirect(16)
-        val manager = BinaryBufferManager(byteBuf)
-        val editor = MapEditor(manager)
-
-        // Mapa 2x2 8-bit
+    fun testSetConstantRawValue_16Bit_Unsigned() {
         val map = MapDefinition(
-            name = "EGR",
-            startAddress = 0,
+            name = "TestMap_16Bit",
+            address = 0x00,
             rows = 2,
-            columns = 2,
+            cols = 2,
+            representation = DataRepresentation.UINT16_LE,
+            factor = 1.0,
+            offset = 0.0
+        )
+
+        // Ustawienie stałej wartości 5000 dla całej mapy
+        editor.setConstantRawValue(map, 5000L)
+
+        val b0 = bufferManager.readShort(0, ByteOrder.LITTLE_ENDIAN).toInt() and 0xFFFF
+        val b1 = bufferManager.readShort(2, ByteOrder.LITTLE_ENDIAN).toInt() and 0xFFFF
+        val b2 = bufferManager.readShort(4, ByteOrder.LITTLE_ENDIAN).toInt() and 0xFFFF
+        val b3 = bufferManager.readShort(6, ByteOrder.LITTLE_ENDIAN).toInt() and 0xFFFF
+
+        assertEquals(5000, b0)
+        assertEquals(5000, b1)
+        assertEquals(5000, b2)
+        assertEquals(5000, b3)
+    }
+
+    @Test
+    fun testSetConstantPhysicalValue_WithFactorAndOffset() {
+        val map = MapDefinition(
+            name = "PressureMap",
+            address = 0x00,
+            rows = 1,
+            cols = 2,
+            representation = DataRepresentation.UINT8,
+            factor = 0.1,
+            offset = 1.0
+        )
+
+        // Physical = RAW * 0.1 + 1.0 -> RAW = (Physical - 1.0) / 0.1
+        // Dla Physical = 3.5 -> RAW = (3.5 - 1.0) / 0.1 = 25
+        editor.setConstantPhysicalValue(map, 3.5)
+
+        val raw0 = bufferManager.readByte(0).toInt() and 0xFF
+        val raw1 = bufferManager.readByte(1).toInt() and 0xFF
+
+        assertEquals(25, raw0)
+        assertEquals(25, raw1)
+    }
+
+    @Test
+    fun testSetConstantPhysicalValue_SelectedCellsOnly() {
+        val map = MapDefinition(
+            name = "SelectedCellsMap",
+            address = 0x00,
+            rows = 2,
+            cols = 2,
             representation = DataRepresentation.UINT8,
             factor = 1.0,
             offset = 0.0
         )
 
-        // Zaznaczamy tylko komórkę (0, 1) oraz (1, 0)
-        val selection = setOf(Pair(0, 1), Pair(1, 0))
-        editor.setConstantValue(map, 250.0, selection)
+        // Tylko komórka (0, 1) oraz (1, 0)
+        val selected = setOf(Pair(0, 1), Pair(1, 0))
+        editor.setConstantPhysicalValue(map, 100.0, selected)
 
-        assertEquals(0L, manager.readValue(0, DataRepresentation.UINT8))   // (0,0) - bez zmian
-        assertEquals(250L, manager.readValue(1, DataRepresentation.UINT8)) // (0,1) - zmieniona
-        assertEquals(250L, manager.readValue(2, DataRepresentation.UINT8)) // (1,0) - zmieniona
-        assertEquals(0L, manager.readValue(3, DataRepresentation.UINT8))   // (1,1) - bez zmian
+        assertEquals(0, bufferManager.readByte(0).toInt())
+        assertEquals(100, bufferManager.readByte(1).toInt())
+        assertEquals(100, bufferManager.readByte(2).toInt())
+        assertEquals(0, bufferManager.readByte(3).toInt())
+    }
+
+    @Test
+    fun testClampUpperBound() {
+        val map = MapDefinition(
+            name = "ClampMap",
+            address = 0x00,
+            rows = 1,
+            cols = 1,
+            representation = DataRepresentation.UINT8,
+            factor = 1.0,
+            offset = 0.0
+        )
+
+        // Próba wpisania 999 do pola 8-bit unsigned (max 255)
+        editor.setConstantRawValue(map, 999L)
+
+        val raw = bufferManager.readByte(0).toInt() and 0xFF
+        assertEquals(255, raw)
     }
 }

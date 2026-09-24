@@ -6,119 +6,85 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.util.AttributeSet
-import android.view.GestureDetector
-import android.view.MotionEvent
 import android.view.View
-import android.widget.Scroller
-import com.winols.app.data.BinaryBufferManager
-import com.winols.app.model.BitDepth
-import com.winols.app.model.DataRepresentation
-import com.winols.app.model.ValueType
+import com.winols.app.data.DataFormatterEngine
+import com.winols.app.model.DataRepresentationConfig
+import java.nio.ByteBuffer
 
+/**
+ * Zoptymalizowany pod kątem pamięci widok siatki binarnej/HEX.
+ * Umożliwia płynne przewijanie i natychmiastowe przerysowanie przy zmianie konfiguracji endianness/bitów.
+ */
 class HexGridView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private var bufferManager: BinaryBufferManager? = null
-    private var representation: DataRepresentation = DataRepresentation(BitDepth.BITS_8, ValueType.HEX)
+    private var buffer: ByteBuffer? = null
+    private var baseOffset: Int = 0
+    private var rowsCount: Int = 16
+    private var columnsCount: Int = 16
+
+    private var representationConfig = DataRepresentationConfig()
+    private var showPhysicalValues: Boolean = false
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        color = Color.parseColor("#E0E0E0")
         textSize = 32f
         typeface = Typeface.MONOSPACE
     }
 
-    private val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#4CAF50")
-        textSize = 32f
+    private val addressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#4FC3F7")
+        textSize = 30f
         typeface = Typeface.MONOSPACE
     }
 
-    private val modifiedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FF5252")
-        textSize = 32f
-        typeface = Typeface.MONOSPACE
-    }
-
-    private val rowHeight = 44f
-    private val colWidth = 64f
-    private val addressOffset = 180f
-    private val bytesPerRow = 16
-
-    private val scroller = Scroller(context)
-    private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-            scrollBy(0, distanceY.toInt())
-            return true
-        }
-
-        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
-            val totalRows = ((bufferManager?.capacity ?: 0) + bytesPerRow - 1) / bytesPerRow
-            val maxScrollY = Math.max(0, (totalRows * rowHeight).toInt() - height)
-            scroller.fling(scrollX, scrollY, 0, -velocityY.toInt(), 0, 0, 0, maxScrollY)
-            postInvalidateOnAnimation()
-            return true
-        }
-    })
-
-    fun setBufferManager(manager: BinaryBufferManager) {
-        this.bufferManager = manager
+    fun setBuffer(byteBuffer: ByteBuffer, initialOffset: Int = 0) {
+        this.buffer = byteBuffer
+        this.baseOffset = initialOffset
         invalidate()
     }
 
-    fun setRepresentation(rep: DataRepresentation) {
-        this.representation = rep
+    fun updateConfig(newConfig: DataRepresentationConfig, showPhysical: Boolean = false) {
+        this.representationConfig = newConfig
+        this.showPhysicalValues = showPhysical
         invalidate()
     }
 
-    override fun computeScroll() {
-        if (scroller.computeScrollOffset()) {
-            scrollTo(scroller.currX, scroller.currY)
-            postInvalidateOnAnimation()
-        }
-    }
-
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        return gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
+    fun scrollToOffset(offset: Int) {
+        this.baseOffset = offset
+        invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val manager = bufferManager ?: return
-        val totalBytes = manager.capacity
-        if (totalBytes == 0) return
+        val buf = buffer ?: return
 
-        val startRow = Math.max(0, (scrollY / rowHeight).toInt())
-        val endRow = Math.min((totalBytes + bytesPerRow - 1) / bytesPerRow, ((scrollY + height) / rowHeight).toInt() + 1)
+        val cellWidth = width / (columnsCount + 2.5f)
+        val rowHeight = height / (rowsCount + 1f)
+        var currentOffset = baseOffset
 
-        val bytesPerElement = representation.bitDepth.bytesPerElement
-        val elementsPerRow = bytesPerRow / bytesPerElement
+        for (row in 0 until rowsCount) {
+            val yPos = (row + 1) * rowHeight
 
-        for (r in startRow until endRow) {
-            val rowY = (r + 1) * rowHeight
-            val baseAddress = r * bytesPerRow
+            // Rysowanie adresu wiersza
+            val addressStr = String.format("%06X:", currentOffset)
+            canvas.drawText(addressStr, 10f, yPos, addressPaint)
 
-            val addrStr = String.format("%08X:", baseAddress)
-            canvas.drawText(addrStr, 10f, rowY, headerPaint)
+            for (col in 0 until columnsCount) {
+                if (currentOffset + representationConfig.stepBytes > buf.capacity()) break
 
-            for (c in 0 until elementsPerRow) {
-                val elementAddress = baseAddress + (c * bytesPerElement)
-                if (elementAddress >= totalBytes) break
-
-                val isMod = manager.isModified(elementAddress, bytesPerElement)
-                val paint = if (isMod) modifiedPaint else textPaint
-
-                val raw = manager.readRawValue(elementAddress, representation)
-                val str = when (representation.bitDepth) {
-                    BitDepth.BITS_8 -> String.format("%02X", raw and 0xFF)
-                    BitDepth.BITS_16 -> String.format("%04X", raw and 0xFFFF)
-                    BitDepth.BITS_32 -> String.format("%08X", raw and 0xFFFFFFFFL)
+                val xPos = (col + 2.5f) * cellWidth
+                val cellText = if (showPhysicalValues) {
+                    DataFormatterEngine.formatAsDecimal(buf, currentOffset, representationConfig)
+                } else {
+                    DataFormatterEngine.formatAsHex(buf, currentOffset, representationConfig)
                 }
 
-                val posX = addressOffset + (c * (colWidth * bytesPerElement))
-                canvas.drawText(str, posX, rowY, paint)
+                canvas.drawText(cellText, xPos, yPos, textPaint)
+                currentOffset += representationConfig.stepBytes
             }
         }
     }
