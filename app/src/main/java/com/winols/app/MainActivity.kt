@@ -1,90 +1,109 @@
 package com.winols.app
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
-import com.winols.app.data.BinaryBufferManager
 import com.winols.app.edit.MapEditor
-import com.winols.app.engine.ChecksumEngine
-import com.winols.app.engine.MapFinderEngine
-import com.winols.app.model.BitDepth
-import com.winols.app.model.DataRepresentation
+import com.winols.app.engine.ChecksumFamily
 import com.winols.app.model.MapDefinition
-import com.winols.app.model.ValueType
-import com.winols.app.ui.views.HexGridView
-import com.winols.app.ui.views.Surface3DView
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.winols.app.ui.EcuGridView
 import java.io.File
-import java.nio.ByteOrder
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
-    private val bufferManager = BinaryBufferManager()
-    private val mapEditor = MapEditor(bufferManager)
-    private val mapFinder = MapFinderEngine(bufferManager)
-    private val checksumEngine = ChecksumEngine(bufferManager)
+    private val binModel = BinModel()
+    private lateinit var mapEditor: MapEditor
+    private lateinit var ecuGridView: EcuGridView
+    private var currentSelectedMap: MapDefinition? = null
 
-    private lateinit var hexView: HexGridView
-    private lateinit var surface3DView: Surface3DView
+    companion object {
+        private const val REQUEST_CODE_OPEN_BIN = 1001
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        hexView = findViewById(R.id.hexGridView)
-        surface3DView = findViewById(R.id.surface3DView)
+        mapEditor = MapEditor(binModel)
+        ecuGridView = findViewById(R.id.ecuGridView)
 
-        hexView.setBufferManager(bufferManager)
-
-        initSession()
+        setupUI()
     }
 
-    private fun initSession() {
-        lifecycleScope.launch {
-            val syntheticData = ByteArray(64 * 1024)
-            for (i in syntheticData.indices) {
-                syntheticData[i] = (i % 256).toByte()
+    private fun setupUI() {
+        findViewById<android.view.View>(R.id.btnLoadBin)?.setOnClickListener {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
             }
-            bufferManager.loadBytes(syntheticData)
-            hexView.invalidate()
+            startActivityForResult(intent, REQUEST_CODE_OPEN_BIN)
+        }
 
-            val detectedMaps = withContext(Dispatchers.Default) {
-                mapFinder.scanPotentialMaps()
+        findViewById<android.view.View>(R.id.btnSelectMap)?.setOnClickListener {
+            if (binModel.maps.isEmpty()) {
+                Toast.makeText(this, "Brak zidentyfikowanych map", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
             }
+            val mapNames = binModel.maps.map { it.name }.toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle("Wybierz mapę")
+                .setItems(mapNames) { _, which ->
+                    val chosen = binModel.maps[which]
+                    currentSelectedMap = chosen
+                    ecuGridView.bind(binModel, chosen)
+                }
+                .show()
+        }
 
-            if (detectedMaps.isNotEmpty()) {
-                val firstMap = detectedMaps[0]
-                surface3DView.setMap(bufferManager, firstMap)
-                
-                mapEditor.applyOperation(
-                    mapDef = firstMap,
-                    type = MapEditor.OperationType.MULTIPLY_PERCENT,
-                    value = 10.0
-                )
-                hexView.invalidate()
-                surface3DView.invalidate()
-            }
+        findViewById<android.view.View>(R.id.btnModifyCell)?.setOnClickListener {
+            val map = currentSelectedMap ?: return@setOnClickListener
+            val cell = ecuGridView.selectedCell ?: return@setOnClickListener
+
+            val input = android.widget.EditText(this)
+            input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            input.setText(binModel.getCellValue(map, cell.first, cell.second).toString())
+
+            AlertDialog.Builder(this)
+                .setTitle("Edycja komórki [${cell.first}, ${cell.second}]")
+                .setView(input)
+                .setPositiveButton("Zapisz") { _, _ ->
+                    val newVal = input.text.toString().toDoubleOrNull()
+                    if (newVal != null) {
+                        mapEditor.modifySingleCell(map, cell.first, cell.second, newVal)
+                        ecuGridView.invalidate()
+                    }
+                }
+                .setNegativeButton("Anuluj", null)
+                .show()
         }
     }
 
-    fun executeChecksumValidation(start: Int, end: Int, target: Int) {
-        lifecycleScope.launch {
-            val result = checksumEngine.verifyAndPatch(
-                startAddress = start,
-                endAddress = end,
-                checksumAddress = target,
-                algorithm = ChecksumEngine.Algorithm.CRC32,
-                patch = true
-            )
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_CODE_OPEN_BIN && resultCode == Activity.RESULT_OK) {
+            data?.data?.let { uri -> loadBinaryUri(uri) }
+        }
+    }
+
+    private fun loadBinaryUri(uri: Uri) {
+        contentResolver.openInputStream(uri)?.use { stream ->
+            val bytes = stream.readBytes()
+            binModel.loadBytes(bytes)
             Toast.makeText(
-                this@MainActivity,
-                "Checksum Valid: ${result.isValid} -> Patched: 0x${java.lang.Long.toHexString(result.calculated)}",
+                this,
+                "Załadowano ${bytes.size} bajtów. Wykryte mapy: ${binModel.maps.size}",
                 Toast.LENGTH_LONG
             ).show()
-            hexView.invalidate()
+
+            if (binModel.maps.isNotEmpty()) {
+                currentSelectedMap = binModel.maps[0]
+                ecuGridView.bind(binModel, binModel.maps[0])
+            }
         }
     }
 }
