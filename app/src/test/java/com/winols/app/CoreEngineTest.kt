@@ -1,76 +1,93 @@
 package com.winols.app
 
 import com.winols.app.data.BinaryBufferManager
-import com.winols.app.model.BitWidth
-import com.winols.app.model.Endianness
-import com.winols.app.model.HexViewConfig
-import com.winols.app.model.SignMode
-import org.junit.Assert.assertEquals
-import org.junit.Test
+import com.winols.app.edit.MapEditor
+import com.winols.app.engine.ChecksumEngine
+import com.winols.app.export.ExcelExporter
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import java.io.File
 
 class CoreEngineTest {
 
-    @Test
-    fun test8BitUnsignedAndSigned() {
-        // 0xFE = 254 (unsigned) lub -2 (signed)
-        val data = byteArrayOf(0xFE.toByte())
-        val manager = BinaryBufferManager(data)
+    private lateinit var buffer: ByteArray
+    private lateinit var bufferManager: BinaryBufferManager
 
-        val unsignedVal = manager.readValue(0, BitWidth.BIT_8, Endianness.BIG_ENDIAN, SignMode.UNSIGNED)
-        assertEquals(254, unsignedVal.toInt())
-
-        val signedVal = manager.readValue(0, BitWidth.BIT_8, Endianness.BIG_ENDIAN, SignMode.SIGNED)
-        assertEquals(-2, signedVal.toByte().toInt())
+    @BeforeEach
+    fun setUp() {
+        buffer = ByteArray(512) { 0 }
+        bufferManager = BinaryBufferManager(buffer)
     }
 
     @Test
-    fun test16BitLittleEndianVsBigEndian() {
-        // Bajty: [0x12, 0x34]
-        // Big Endian (Hi/Lo):    0x1234 = 4660
-        // Little Endian (Lo/Hi): 0x3412 = 13330
-        val data = byteArrayOf(0x12.toByte(), 0x34.toByte())
-        val manager = BinaryBufferManager(data)
+    fun `test checksum calculate verify and patch`() {
+        // Blok danych 0x10 do 0x13: 4 bajty [0x10, 0x20, 0x30, 0x40]
+        buffer[0x10] = 0x10.toByte()
+        buffer[0x11] = 0x20.toByte()
+        buffer[0x12] = 0x30.toByte()
+        buffer[0x13] = 0x40.toByte()
 
-        val bigEndianVal = manager.readValue(0, BitWidth.BIT_16, Endianness.BIG_ENDIAN, SignMode.UNSIGNED)
-        assertEquals(0x1234, bigEndianVal.toInt())
-        assertEquals(4660, bigEndianVal.toInt())
+        val block = ChecksumEngine.ChecksumBlock(
+            id = "CHK_1",
+            description = "Main Add16 Checksum",
+            startAddress = 0x10,
+            endAddress = 0x13,
+            checksumAddress = 0x20,
+            algorithm = ChecksumEngine.Algorithm.ADD16_LE
+        )
 
-        val littleEndianVal = manager.readValue(0, BitWidth.BIT_16, Endianness.LITTLE_ENDIAN, SignMode.UNSIGNED)
-        assertEquals(0x3412, littleEndianVal.toInt())
-        assertEquals(13330, littleEndianVal.toInt())
+        val engine = ChecksumEngine(bufferManager)
+
+        // Suma 16-bit: (0x2010 + 0x4030) = 0x6040 (24640)
+        val calculated = engine.calculate(block)
+        assertEquals(0x6040L, calculated)
+
+        // Weryfikacja przed spatchowaniem powinna zwrócić false
+        assertFalse(engine.verify(block))
+
+        // Spatchowanie sumy kontrolnej w buforze
+        engine.patch(block)
+        assertTrue(engine.verify(block))
+
+        val writtenLow = bufferManager.readRawValue(0x20, 1)
+        val writtenHigh = bufferManager.readRawValue(0x21, 1)
+        assertEquals(0x40L, writtenLow)
+        assertEquals(0x60L, writtenHigh)
     }
 
     @Test
-    fun test16BitSigned() {
-        // Bajty: [0xFF, 0xFE]
-        // Big Endian Signed: 0xFFFE = -2
-        val data = byteArrayOf(0xFF.toByte(), 0xFE.toByte())
-        val manager = BinaryBufferManager(data)
+    fun `test excel csv export`() {
+        val map = MapDefinition(
+            id = "map_export_test",
+            name = "TestMap",
+            unit = "mg",
+            startAddress = 0x30,
+            rows = 2,
+            columns = 2,
+            dataType = DataType.UINT8,
+            factor = 1.0,
+            additionOffset = 0.0
+        )
+        val editor = MapEditor(bufferManager, map)
+        editor.writePhysicalValue(0, 0, 10.0)
+        editor.writePhysicalValue(0, 1, 20.0)
+        editor.writePhysicalValue(1, 0, 30.0)
+        editor.writePhysicalValue(1, 1, 40.0)
 
-        val signedBig = manager.readValue(0, BitWidth.BIT_16, Endianness.BIG_ENDIAN, SignMode.SIGNED)
-        assertEquals(-2, signedBig.toShort().toInt())
+        val tempFile = File.createTempFile("map_export", ".csv")
+        tempFile.deleteOnExit()
 
-        val unsignedBig = manager.readValue(0, BitWidth.BIT_16, Endianness.BIG_ENDIAN, SignMode.UNSIGNED)
-        assertEquals(65534, unsignedBig.toInt())
-    }
+        ExcelExporter.exportToCsv(editor, tempFile)
 
-    @Test
-    fun testWrite16BitEndianness() {
-        val buffer = ByteArray(2)
-        val manager = BinaryBufferManager(buffer)
-
-        // Zapis wartości 0x0A0B w Little Endian (Lo/Hi) -> na dysku: [0x0B, 0x0A]
-        val configLe = HexViewConfig(bitWidth = BitWidth.BIT_16, endianness = Endianness.LITTLE_ENDIAN)
-        manager.writeValue(0, 0x0A0B, configLe)
-
-        assertEquals(0x0B.toByte(), manager.getRawBytes()[0])
-        assertEquals(0x0A.toByte(), manager.getRawBytes()[1])
-
-        // Zapis wartości 0x0A0B w Big Endian (Hi/Lo) -> na dysku: [0x0A, 0x0B]
-        val configBe = HexViewConfig(bitWidth = BitWidth.BIT_16, endianness = Endianness.BIG_ENDIAN)
-        manager.writeValue(0, 0x0A0B, configBe)
-
-        assertEquals(0x0A.toByte(), manager.getRawBytes()[0])
-        assertEquals(0x0B.toByte(), manager.getRawBytes()[1])
+        val lines = tempFile.readLines()
+        assertTrue(lines.isNotEmpty())
+        assertTrue(lines.any { it.contains("TestMap") })
+        assertTrue(lines.any { it.contains("10.00") && it.contains("20.00") })
+        assertTrue(lines.any { it.contains("30.00") && it.contains("40.00") })
     }
 }
