@@ -1,50 +1,42 @@
 package com.winols.app
 
 import com.winols.app.data.BinaryBufferManager
-import com.winols.app.model.BitWidth
-import com.winols.app.model.DataRepresentation
-import com.winols.app.model.Signedness
-import java.nio.ByteOrder
+import com.winols.app.engine.ChecksumEngine
+import com.winols.app.engine.ChecksumFamily
+import com.winols.app.engine.ChecksumResult
+import com.winols.app.engine.MapFinderEngine
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import java.io.File
 
 /**
- * Model stanu pliku binarnego łączący bufor z parametrami widoku i reprezentacją danych.
+ * Model domenowy spinający bufor binarny, definicje map oraz operacje silnika obliczeniowego.
  */
-data class BinModel(
-    val bufferManager: BinaryBufferManager,
-    var representation: DataRepresentation = DataRepresentation(
-        bitWidth = BitWidth.BITS_16,
-        signedness = Signedness.UNSIGNED,
-        byteOrder = ByteOrder.LITTLE_ENDIAN
-    ),
-    var activeAddress: Int = 0,
-    var columns: Int = 16
+class BinModel(
+    val bufferManager: BinaryBufferManager = BinaryBufferManager()
 ) {
-    val totalBytes: Int get() = bufferManager.size
+    val maps: MutableList<MapDefinition> = mutableListOf()
+    private val checksumEngine = ChecksumEngine()
+    private val mapFinderEngine = MapFinderEngine()
 
-    fun toggleEndianness() {
-        val newOrder = if (representation.byteOrder == ByteOrder.LITTLE_ENDIAN) {
-            ByteOrder.BIG_ENDIAN
-        } else {
-            ByteOrder.LITTLE_ENDIAN
-        }
-        representation = representation.copy(byteOrder = newOrder)
+    fun loadBin(file: File) {
+        bufferManager.loadFromFile(file)
+        detectMaps()
     }
 
-    fun toggleBitWidth() {
-        val nextWidth = when (representation.bitWidth) {
-            BitWidth.BITS_8 -> BitWidth.BITS_16
-            BitWidth.BITS_16 -> BitWidth.BITS_32
-            BitWidth.BITS_32 -> BitWidth.BITS_8
-        }
-        representation = representation.copy(bitWidth = nextWidth)
+    fun loadBytes(bytes: ByteArray) {
+        bufferManager.loadFromBytes(bytes)
+        detectMaps()
     }
 
-    fun toggleSignedness() {
-        val nextSign = if (representation.signedness == Signedness.UNSIGNED) {
-            Signedness.SIGNED
-        } else {
-            Signedness.UNSIGNED
+    fun detectMaps() {
+        maps.clear()
+        if (bufferManager.size > 0) {
+            val detected = mapFinderEngine.scanForPotentialMaps(bufferManager.rawBuffer)
+            maps.addAll(detected)
         }
-        representation = representation.copy(signedness = nextSign)
     }
-}
+
+    fun readCell(map: MapDefinition, row: Int, col: Int): Double {
+        if (row !in 0 until map.rows || col !in 0 until map.columns) return 0.0
+        val cell### project_tracker.py
