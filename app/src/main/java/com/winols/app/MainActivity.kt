@@ -14,7 +14,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.winols.app.databinding.ActivityMainBinding
 import com.winols.app.edit.MapEditor
+import com.winols.app.model.Endianness
 import com.winols.app.model.MapDefinition
+import com.winols.app.model.NumberBase
+import com.winols.app.model.WordWidth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,7 +47,52 @@ class MainActivity : AppCompatActivity() {
 
         mapEditor = MapEditor(binModel)
         setupListeners()
+        setupRepresentationToolbar()
         observeModel()
+    }
+
+    private fun setupRepresentationToolbar() {
+        binding.btnQuickHexDec.setOnClickListener {
+            binding.ecuGridView.toggleHexDec()
+            updateToolbarLabels()
+        }
+
+        binding.btnQuickWidth.setOnClickListener {
+            binding.ecuGridView.toggleBitWidth()
+            updateToolbarLabels()
+        }
+
+        binding.btnQuickEndian.setOnClickListener {
+            binding.ecuGridView.toggleEndianness()
+            updateToolbarLabels()
+        }
+
+        binding.btnQuickFormula.setOnClickListener {
+            binding.ecuGridView.toggleEngineeringFormula()
+            updateToolbarLabels()
+        }
+
+        updateToolbarLabels()
+    }
+
+    private fun updateToolbarLabels() {
+        val cfg = binding.ecuGridView.displayConfig
+
+        binding.btnQuickHexDec.text = when (cfg.base) {
+            NumberBase.HEX -> "HEX"
+            NumberBase.DECIMAL_UNSIGNED -> "DEC (Unsigned)"
+            NumberBase.DECIMAL_SIGNED -> "DEC (Signed)"
+        }
+
+        binding.btnQuickWidth.text = "${cfg.wordWidth.byteSize * 8}-Bit"
+
+        binding.btnQuickEndian.text = if (cfg.endianness == Endianness.LITTLE_ENDIAN) {
+            "Lo/Hi (LE)"
+        } else {
+            "Hi/Lo (BE)"
+        }
+
+        binding.btnQuickFormula.text = if (cfg.applyFormulas) "Wzór (Fakt/Off)" else "Wart. Surowe"
     }
 
     private fun observeModel() {
@@ -55,13 +103,13 @@ class MainActivity : AppCompatActivity() {
                         when (state) {
                             is BinLoadingState.Loading -> {
                                 binding.btnLoadBin.isEnabled = false
-                                Toast.makeText(this@MainActivity, "Wczytywanie i skanowanie w tle...", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this@MainActivity, "Wczytywanie i analiza...", Toast.LENGTH_SHORT).show()
                             }
                             is BinLoadingState.Success -> {
                                 binding.btnLoadBin.isEnabled = true
                                 Toast.makeText(
                                     this@MainActivity,
-                                    "Załadowano ${state.byteCount} bajtów. Znaleziono map: ${state.mapCount}",
+                                    "Wczytano: ${state.byteCount} B. Znaleziono map: ${state.mapCount}",
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -127,69 +175,11 @@ class MainActivity : AppCompatActivity() {
             val map = currentSelectedMap ?: return@setOnClickListener
             val cell = binding.ecuGridView.selectedCell ?: return@setOnClickListener
 
-            val input = EditText(this).apply {
-                inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-                setText(binModel.getCellValue(map, cell.first, cell.second).toString())
-            }
+            val cfg = binding.ecuGridView.displayConfig
+            val activeType = cfg.toDataType()
+            val step = activeType.byteSize
+            val cellAddress = map.startAddress + ((cell.first * map.columns + cell.second) * step)
 
-            AlertDialog.Builder(this)
-                .setTitle("Edycja komórki [R:${cell.first}, C:${cell.second}]")
-                .setView(input)
-                .setPositiveButton("Zapisz") { _, _ ->
-                    val newVal = input.text.toString().toDoubleOrNull()
-                    if (newVal != null) {
-                        mapEditor.modifySingleCell(map, cell.first, cell.second, newVal)
-                        bindActiveViews(map)
-                    }
-                }
-                .setNegativeButton("Anuluj", null)
-                .show()
-        }
-    }
+            val rawVal = binModel.bufferManager.readValue(cellAddress,Oto kompletna implementacja obsługi formatowania i dekodowania danych binarnych dla edytora HEX/Map (8-bit, 16-bit, signed/unsigned oraz porządku bajtów Little Endian / Big Endian).
 
-    private fun updateViewModeUI() {
-        binding.btnToggleViewMode.text = when (currentMode) {
-            EditorViewMode.TABLE_GRID -> "Tryb: Tabela"
-            EditorViewMode.CURVE_2D -> "Tryb: Wykres 2D"
-            EditorViewMode.SURFACE_3D -> "Tryb: Siatka 3D"
-        }
-
-        binding.ecuGridView.visibility = if (currentMode == EditorViewMode.TABLE_GRID) View.VISIBLE else View.GONE
-        binding.ecuCurve2DView.visibility = if (currentMode == EditorViewMode.CURVE_2D) View.VISIBLE else View.GONE
-        binding.ecuSurface3DView.visibility = if (currentMode == EditorViewMode.SURFACE_3D) View.VISIBLE else View.GONE
-
-        currentSelectedMap?.let { bindActiveViews(it) }
-    }
-
-    private fun bindActiveViews(map: MapDefinition) {
-        when (currentMode) {
-            EditorViewMode.TABLE_GRID -> binding.ecuGridView.bind(binModel, map)
-            EditorViewMode.CURVE_2D -> binding.ecuCurve2DView.bind(binModel, map, binding.ecuGridView.selectedCell?.first ?: 0)
-            EditorViewMode.SURFACE_3D -> binding.ecuSurface3DView.bind(binModel, map)
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_CODE_OPEN_BIN && resultCode == Activity.RESULT_OK) {
-            data?.data?.let { uri -> loadBinaryUriAsync(uri) }
-        }
-    }
-
-    private fun loadBinaryUriAsync(uri: Uri) {
-        lifecycleScope.launch {
-            try {
-                val stream = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)
-                }
-                if (stream != null) {
-                    binModel.loadStreamAsync(stream)
-                } else {
-                    Toast.makeText(this@MainActivity, "Nie udało się otworzyć strumienia pliku", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this@MainActivity, "Błąd odczytu: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-}
+### app/src/main/java/com/winols/app/data/HexFormatManager.kt
