@@ -1,54 +1,74 @@
 package com.winols.app.engine
 
 import com.winols.app.data.BinaryBufferManager
-import java.nio.ByteOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.util.zip.CRC32
 
-sealed class ChecksumResult {
-    data class Success(val calculated: Long, val original: Long, val matched: Boolean) : ChecksumResult()
-    data class Error(val message: String) : ChecksumResult()
-}
+object ChecksumEngine {
 
-class ChecksumEngine(private val bufferManager: BinaryBufferManager = BinaryBufferManager.instance) {
-
-    suspend fun verifyAdd8(startAddr: Int, endAddr: Int, storedAddr: Int): ChecksumResult =
-        withContext(Dispatchers.Default) {
-            val length = endAddr - startAddr
-            if (length <= 0) return@withContext ChecksumResult.Error("Nieprawidłowy zakres pamięci")
-
-            val slice = bufferManager.getBufferSlice(startAddr, length)
-            var sum = 0
-            for (b in slice) {
-                sum = (sum + (b.toInt() and 0xFF)) and 0xFF
-            }
-
-            val stored = bufferManager.readValue(storedAddr, com.winols.app.model.DataType.UBYTE, ByteOrder.LITTLE_ENDIAN).toLong()
-            ChecksumResult.Success(sum.toLong(), stored, sum.toLong() == stored)
+    suspend fun calculateAdd8(
+        bufferManager: BinaryBufferManager,
+        startAddress: Int,
+        endAddress: Int
+    ): Int = withContext(Dispatchers.Default) {
+        val data = bufferManager.toByteArray()
+        var sum = 0
+        for (i in startAddress..endAddress.coerceAtMost(data.size - 1)) {
+            sum = (sum + (data[i].toInt() and 0xFF)) and 0xFF
         }
+        sum
+    }
 
-    suspend fun verifyAdd16(startAddr: Int, endAddr: Int, storedAddr: Int, order: ByteOrder): ChecksumResult =
-        withContext(Dispatchers.Default) {
-            val length = endAddr - startAddr
-            if (length <= 0 || length % 2 != 0) {
-                return@withContext ChecksumResult.Error("Zakres musi mieć długość parzystą dla 16-bit sumy")
-            }
-
-            val slice = bufferManager.getBufferSlice(startAddr, length)
-            var sum = 0
-            for (i in 0 until length step 2) {
-                val b1 = slice[i].toInt() and 0xFF
-                val b2 = slice[i + 1].toInt() and 0xFF
-                val word = if (order == ByteOrder.LITTLE_ENDIAN) (b2 shl 8) or b1 else (b1 shl 8) or b2
-                sum = (sum + word) and 0xFFFF
-            }
-
-            val stored = bufferManager.readValue(storedAddr, com.winols.app.model.DataType.UWORD, order).toLong()
-            ChecksumResult.Success(sum.toLong(), stored, sum.toLong() == stored)
+    suspend fun calculateAdd16(
+        bufferManager: BinaryBufferManager,
+        startAddress: Int,
+        endAddress: Int,
+        littleEndian: Boolean = false
+    ): Int = withContext(Dispatchers.Default) {
+        val data = bufferManager.toByteArray()
+        var sum = 0
+        var i = startAddress
+        while (i < endAddress.coerceAtMost(data.size - 1)) {
+            val b1 = data[i].toInt() and 0xFF
+            val b2 = data[i + 1].toInt() and 0xFF
+            val word = if (littleEndian) (b2 shl 8) or b1 else (b1 shl 8) or b2
+            sum = (sum + word) and 0xFFFF
+            i += 2
         }
+        sum
+    }
 
-    suspend fun patchChecksum(address: Int, value: Long, type: com.winols.app.model.DataType, order: ByteOrder) =
-        withContext(Dispatchers.IO) {
-            bufferManager.writeValue(address, value.toDouble(), type, order)
+    suspend fun calculateCRC16CCITT(
+        bufferManager: BinaryBufferManager,
+        startAddress: Int,
+        endAddress: Int
+    ): Int = withContext(Dispatchers.Default) {
+        val data = bufferManager.toByteArray()
+        var crc = 0xFFFF
+        val polynomial = 0x1021
+
+        for (i in startAddress..endAddress.coerceAtMost(data.size - 1)) {
+            val b = data[i].toInt() and 0xFF
+            for (bit in 0 until 8) {
+                val bitVal = ((b shr (7 - bit)) and 1) == 1
+                val c15 = ((crc shr 15) and 1) == 1
+                crc = crc shl 1
+                if (c15 xor bitVal) crc = crc xor polynomial
+            }
         }
+        crc and 0xFFFF
+    }
+
+    suspend fun calculateCRC32(
+        bufferManager: BinaryBufferManager,
+        startAddress: Int,
+        endAddress: Int
+    ): Long = withContext(Dispatchers.Default) {
+        val data = bufferManager.toByteArray()
+        val crc = CRC32()
+        val len = (endAddress - startAddress + 1).coerceAtMost(data.size - startAddress)
+        crc.update(data, startAddress, len)
+        crc.value
+    }
 }

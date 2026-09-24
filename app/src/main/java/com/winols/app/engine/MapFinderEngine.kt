@@ -1,74 +1,92 @@
 package com.winols.app.engine
 
 import com.winols.app.data.BinaryBufferManager
+import com.winols.app.data.DataFormat
 import com.winols.app.model.AxisDefinition
-import com.winols.app.model.DataType
 import com.winols.app.model.MapDefinition
-import java.nio.ByteOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 
-class MapFinderEngine(private val bufferManager: BinaryBufferManager = BinaryBufferManager.instance) {
+class MapFinderEngine {
 
-    suspend fun findPotentialMaps(
-        minRows: Int = 4,
-        maxRows: Int = 32,
-        minCols: Int = 4,
-        maxCols: Int = 32
+    suspend fun scanBuffer(
+        bufferManager: BinaryBufferManager,
+        minDim: Int = 4,
+        maxDim: Int = 20
     ): List<MapDefinition> = withContext(Dispatchers.Default) {
         val detected = mutableListOf<MapDefinition>()
-        val totalBytes = bufferManager.currentFileSize
-        if (totalBytes < 128) return@withContext detected
-
+        val totalSize = bufferManager.size
         var offset = 0
-        while (offset < totalBytes - 64) {
-            // Heurystyka wykrywania nagłówków osi typu Bosch: [Length X][Length Y]
-            val dimX = bufferManager.readValue(offset, DataType.UBYTE, ByteOrder.BIG_ENDIAN).toInt()
-            val dimY = bufferManager.readValue(offset + 1, DataType.UBYTE, ByteOrder.BIG_ENDIAN).toInt()
 
-            if (dimX in minCols..maxCols && dimY in minRows..maxRows) {
-                val candidateStart = offset + 2
-                val mapDataSize = dimX * dimY * DataType.UWORD.byteSize
+        // Skanowanie 16-bitowych sekwencji Bosch/Siemens: [Liczba kolumn (X)] [Liczba wierszy (Y)]
+        while (offset < totalSize - 64) {
+            val colCandidate = bufferManager.readRawValue(offset, DataFormat.UINT16_BE).toInt()
+            val rowCandidate = bufferManager.readRawValue(offset + 2, DataFormat.UINT16_BE).toInt()
 
-                if (candidateStart + mapDataSize <= totalBytes) {
-                    val variance = calculateVariance(candidateStart, dimX * dimY, DataType.UWORD)
-                    // Filtrujemy płaskie bloki wypełnione 0x00 lub 0xFF
-                    if (variance > 25.0) {
-                        detected.add(
-                            MapDefinition(
-                                id = "MAP_${Integer.toHexString(candidateStart).uppercase()}",
-                                name = "Potential Map ${dimY}x${dimX} @ 0x${Integer.toHexString(candidateStart).uppercase()}",
-                                startAddress = candidateStart,
-                                rows = dimY,
-                                columns = dimX,
-                                dataType = DataType.UWORD,
-                                byteOrder = ByteOrder.BIG_ENDIAN,
-                                xAxis = AxisDefinition(address = offset, length = dimX, name = "X"),
-                                yAxis = AxisDefinition(address = offset + 1, length = dimY, name = "Y"),
-                                confidence = 0.75f
-                            )
+            if (colCandidate in minDim..maxDim && rowCandidate in minDim..maxDim) {
+                val dataStart = offset + 4
+                val dataLength = colCandidate * rowCandidate * 2
+
+                if (dataStart + dataLength <= totalSize) {
+                    val score = evaluateMatrixEntropy(bufferManager, dataStart, rowCandidate, colCandidate)
+                    if (score > 0.65f) {
+                        val map = MapDefinition(
+                            id = "MAP_0x${Integer.toHexString(dataStart).uppercase()}",
+                            name = "Map_${rowCandidate}x${colCandidate}_0x${Integer.toHexString(dataStart).uppercase()}",
+                            startAddress = dataStart,
+                            rows = rowCandidate,
+                            cols = colCandidate,
+                            cellFormat = DataFormat.INT16_BE,
+                            factor = 1.0,
+                            offset = 0.0,
+                            confidence = score,
+                            xAxis = AxisDefinition("X-Axis", offset - (colCandidate * 2), colCandidate, DataFormat.INT16_BE),
+                            yAxis = AxisDefinition("Y-Axis", offset - (colCandidate * 2) - (rowCandidate * 2), rowCandidate, DataFormat.INT16_BE)
                         )
-                        offset += 2 + mapDataSize
+                        detected.add(map)
+                        offset += dataLength + 4
                         continue
                     }
                 }
             }
             offset += 2
         }
+
         detected
     }
 
-    private fun calculateVariance(startAddr: Int, count: Int, type: DataType): Double {
-        var sum = 0.0
-        var sqSum = 0.0
-        val sampleSize = count.coerceAtMost(128)
+    private fun evaluateMatrixEntropy(
+        bufferManager: BinaryBufferManager,
+        startAddress: Int,
+        rows: Int,
+        cols: Int
+    ): Float {
+        var monotonicRows = 0
+        var smoothGradients = 0
+        var lastVal = -1L
 
-        for (i in 0 until sampleSize) {
-            val v = bufferManager.readValue(startAddr + (i * type.byteSize), type, ByteOrder.BIG_ENDIAN)
-            sum += v
-            sqSum += v * v
+        for (r in 0 until rows) {
+            var rowMonotonic = true
+            for (c in 0 until cols) {
+                val addr = startAddress + (r * cols + c) * 2
+                val current = bufferManager.readRawValue(addr, DataFormat.INT16_BE)
+
+                if (c > 0 && current < lastVal) {
+                    rowMonotonic = false
+                }
+                if (c > 0 && abs(current - lastVal) < 8000) {
+                    smoothGradients++
+                }
+                lastVal = current
+            }
+            if (rowMonotonic) monotonicRows++
         }
-        val mean = sum / sampleSize
-        return (sqSum / sampleSize) - (mean * mean)
+
+        val totalPairs = rows * (cols - 1)
+        val gradientScore = smoothGradients.toFloat() / totalPairs.coerceAtLeast(1)
+        val monotonicityScore = monotonicRows.toFloat() / rows.coerceAtLeast(1)
+
+        return (gradientScore * 0.6f) + (monotonicityScore * 0.4f)
     }
 }
