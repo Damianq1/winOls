@@ -1,39 +1,39 @@
 package com.winols.app.engine
 
 import com.winols.app.data.BinaryBufferManager
-import com.winols.app.model.DataType
+
+enum class ChecksumType {
+    ADD_16,
+    CRC32
+}
 
 class ChecksumEngine(private val bufferManager: BinaryBufferManager) {
 
-    fun calculateSimple16BitSum(startAddress: Int, endAddress: Int): Int {
+    fun calculateSum16(startOffset: Int, endOffset: Int): Int {
         var sum = 0
-        var addr = startAddress
-        while (addr + 1 <= endAddress && addr + 1 < bufferManager.size) {
-            val word = bufferManager.readValue(addr, DataType.UWORD_LE).toInt()
-            sum = (sum + word) and 0xFFFF
-            addr += 2
+        var i = startOffset
+        while (i < endOffset) {
+            sum = (sum + bufferManager.getUShort(i)) and 0xFFFF
+            i += 2
         }
         return sum
     }
 
-    fun verifyChecksum16Bit(startAddress: Int, endAddress: Int, checksumAddress: Int): Boolean {
-        val calculated = calculateSimple16BitSum(startAddress, endAddress)
-        val stored = bufferManager.readValue(checksumAddress, DataType.UWORD_LE).toInt()
-        return calculated == stored
-    }
-
-    fun updateChecksum16Bit(startAddress: Int, endAddress: Int, checksumAddress: Int) {
-        val calculated = calculateSimple16BitSum(startAddress, endAddress)
-        bufferManager.writeValue(checksumAddress, DataType.UWORD_LE, calculated.toDouble())
-    }
-
-    fun calculateCrc32(startAddress: Int, length: Int): Long {
+    fun calculateCRC32(startOffset: Int, endOffset: Int): Long {
         val crc = java.util.zip.CRC32()
-        val raw = bufferManager.getRawBytes()
-        val safeLen = length.coerceAtMost(raw.size - startAddress)
-        if (safeLen > 0 && startAddress >= 0) {
-            crc.update(raw, startAddress, safeLen)
-        }
+        val data = bufferManager.getSubArray(startOffset, endOffset - startOffset)
+        crc.update(data)
         return crc.value
+    }
+
+    fun verifyChecksum16(startOffset: Int, endOffset: Int, expectedChecksumOffset: Int): Boolean {
+        val actual = calculateSum16(startOffset, endOffset)
+        val expected = bufferManager.getUShort(expectedChecksumOffset)
+        return actual == expected
+    }
+
+    fun patchChecksum16(startOffset: Int, endOffset: Int, targetChecksumOffset: Int) {
+        val calculated = calculateSum16(startOffset, endOffset)
+        bufferManager.setShort(targetChecksumOffset, calculated.toShort())
     }
 }

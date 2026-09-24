@@ -1,29 +1,30 @@
 package com.winols.app
 
 import com.winols.app.data.BinaryBufferManager
+import com.winols.app.edit.MapEditor
+import com.winols.app.engine.ChecksumEngine
+import com.winols.app.engine.MapFinderEngine
 import com.winols.app.model.MapDefinition
 import java.io.File
 
-class BinModel(val bufferManager: BinaryBufferManager = BinaryBufferManager()) {
-    val maps: MutableList<MapDefinition> = mutableListOf()
-    var projectFile: File? = null
+class BinModel {
+    val bufferManager = BinaryBufferManager()
+    val editor = MapEditor(bufferManager)
+    val mapFinder = MapFinderEngine(bufferManager)
+    val checksumEngine = ChecksumEngine(bufferManager)
 
-    fun loadBinary(file: File) {
-        projectFile = file
+    val registeredMaps = mutableListOf<MapDefinition>()
+
+    fun loadBin(file: File) {
         bufferManager.loadFromFile(file)
     }
 
-    fun loadBinary(bytes: ByteArray) {
-        bufferManager.loadFromBytes(bytes)
+    fun registerMap(definition: MapDefinition) {
+        registeredMaps.removeAll { it.id == definition.id }
+        registeredMaps.add(definition)
     }
 
-    fun addMap(mapDefinition: MapDefinition) {
-        maps.add(mapDefinition)
+    fun saveBin(destination: File) {
+        destination.writeBytes(bufferManager.toByteArray())
     }
-
-    fun removeMap(mapId: String) {
-        maps.removeAll { it.id == mapId }
-    }
-
-    fun getMap(mapId: String): MapDefinition? = maps.firstOrNull { it.id == mapId }
 }

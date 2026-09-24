@@ -3,64 +3,54 @@ package com.winols.app.engine
 import com.winols.app.data.BinaryBufferManager
 import com.winols.app.model.DataType
 import com.winols.app.model.MapDefinition
+import java.nio.ByteOrder
 
 class MapFinderEngine(private val bufferManager: BinaryBufferManager) {
 
-    fun scanForMonotonicRegions(
-        minElements: Int = 8,
-        dataType: DataType = DataType.UWORD_LE
-    ): List<Int> {
-        val candidateAddresses = mutableListOf<Int>()
-        val step = dataType.byteSize
-        val totalBytes = bufferManager.size
+    /**
+     * Wyszukuje potencjalne tabele na podstawie rosnących/uporządkowanych osi i monotonicznych nagłówków.
+     */
+    fun findPotentialMaps(minColumns: Int = 4, maxColumns: Int = 32): List<MapDefinition> {
+        val candidates = mutableListOf<MapDefinition>()
+        val totalSize = bufferManager.size
+        var offset = 0
 
-        if (totalBytes < minElements * step) return candidateAddresses
-
-        var count = 1
-        var startAddr = 0
-        var prevVal = bufferManager.readValue(0, dataType)
-
-        var addr = step
-        while (addr + step <= totalBytes) {
-            val currVal = bufferManager.readValue(addr, dataType)
-            if (currVal >= prevVal && currVal > 0.0) {
-                if (count == 1) {
-                    startAddr = addr - step
-                }
-                count++
-                if (count >= minElements) {
-                    if (!candidateAddresses.contains(startAddr)) {
-                        candidateAddresses.add(startAddr)
-                    }
-                }
-            } else {
-                count = 1
-            }
-            prevVal = currVal
-            addr += step
-        }
-        return candidateAddresses
-    }
-
-    fun detectPotentialMaps(rows: Int, cols: Int, dataType: DataType = DataType.UWORD_LE): List<MapDefinition> {
-        val maps = mutableListOf<MapDefinition>()
-        val byteLength = rows * cols * dataType.byteSize
-        val candidates = scanForMonotonicRegions(minElements = cols, dataType = dataType)
-
-        for (cand in candidates) {
-            if (cand + byteLength <= bufferManager.size) {
-                maps.add(
+        while (offset < totalSize - (minColumns * 2)) {
+            // Heurystyka: wykrywanie wektora osi (np. wartości 16-bit rosnące monotonicznie)
+            if (isStrictlyMonotonicSequence(offset, minColumns, DataType.USHORT, ByteOrder.BIG_ENDIAN)) {
+                candidates.add(
                     MapDefinition(
-                        id = "MAP_0x${cand.toString(16).uppercase()}",
-                        name = "Potential Map @ 0x${cand.toString(16).uppercase()}",
-                        address = cand,
-                        rows = rows,
-                        cols = cols,
-                        dataType = dataType
+                        id = "MAP_${Integer.toHexString(offset).uppercase()}",
+                        name = "Found Map @ 0x${Integer.toHexString(offset).uppercase()}",
+                        startOffset = offset,
+                        columns = minColumns,
+                        rows = 1,
+                        dataType = DataType.USHORT,
+                        byteOrder = ByteOrder.BIG_ENDIAN
                     )
                 )
+                offset += minColumns * DataType.USHORT.byteSize
+            } else {
+                offset += 2
             }
         }
-        return maps
+        return candidates
+    }
+
+    private fun isStrictlyMonotonicSequence(
+        offset: Int,
+        count: Int,
+        type: DataType,
+        order: ByteOrder
+    ): Boolean {
+        if (offset + (count * type.byteSize) > bufferManager.size) return false
+
+        var prev = bufferManager.getUShort(offset, order)
+        for (i in 1 until count) {
+            val curr = bufferManager.getUShort(offset + (i * type.byteSize), order)
+            if (curr <= prev) return false
+            prev = curr
+        }
+        return true
     }
 }

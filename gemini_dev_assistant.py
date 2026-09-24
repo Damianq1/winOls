@@ -6,6 +6,8 @@ import time
 import re
 import urllib.request
 import json
+import io
+import zipfile
 from pathlib import Path
 from loguru import logger
 from gemini_webapi import GeminiClient
@@ -51,6 +53,38 @@ load_env_vars()
 PAPISID = os.environ.get("PAPISID", "")
 PSIDTS = os.environ.get("GEMINI_PSIDTS", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+
+def fetch_github_run_logs(run_id: int) -> str:
+    """Pobiera i rozpakowuje logi z GitHub Actions dla danego run_id, wyciągając linie błędów."""
+    logs_url = f"https://api.github.com/repos/Damianq1/winOls/actions/runs/{run_id}/logs"
+    headers = {"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+
+    try:
+        req = urllib.request.Request(logs_url, headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            zip_data = response.read()
+
+        extracted_logs = []
+        with zipfile.ZipFile(io.BytesIO(zip_data)) as z:
+            for filename in z.namelist():
+                if filename.endswith(".txt"):
+                    content = z.read(filename).decode("utf-8", errors="ignore")
+                    lines = content.splitlines()
+                    error_lines = [
+                        line for line in lines 
+                        if any(keyword in line for keyword in ["ERROR", "FAILED", "Exception", "e:", "w:", "FAILURE"])
+                    ]
+                    if error_lines:
+                        extracted_logs.append(f"--- LOG: {filename} ---")
+                        extracted_logs.extend(error_lines[-50:])
+
+        if extracted_logs:
+            return "\n".join(extracted_logs[:200])
+        return "Nie znaleziono bezpośrednich wpisów błędów w logach ZIP."
+    except Exception as e:
+        return f"Nie udało się pobrać logów przez GitHub API: {e}"
 
 def build_dynamic_project_context() -> str:
     ensure_valid_cwd()
@@ -112,7 +146,7 @@ def apply_file_changes(parsed_files):
             f.write(content)
         console.print(f"[bold green][+] Zaktualizowano lokalnie: {clean_path}[/bold green]")
 
-async def wait_for_github_actions() -> tuple[str, str]:
+async def wait_for_github_actions() -> tuple[str, int, str]:
     start_time = time.time()
     headers = {"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
     if GITHUB_TOKEN:
@@ -132,9 +166,10 @@ async def wait_for_github_actions() -> tuple[str, str]:
                         latest = runs[0]
                         status = latest.get("status")
                         conclusion = latest.get("conclusion")
+                        run_id = latest.get("id", 0)
                         
                         if status == "completed":
-                            return conclusion, latest.get("url", "")
+                            return conclusion, run_id, latest.get("url", "")
             except Exception:
                 pass
 
@@ -159,17 +194,23 @@ async def git_sync_and_monitor(client) -> tuple[bool, str]:
             console.print("[dim cyan][*] Brak nowych zmian do zatwierdzenia w Git.[/dim cyan]")
             return True, ""
 
-        conclusion, run_url = await wait_for_github_actions()
+        conclusion, run_id, run_url = await wait_for_github_actions()
         
         if conclusion == "success":
             console.print("[bold green][ok] GitHub Actions -> Budowanie zakończone SUKCESEM![/bold green]")
             return True, ""
         else:
             console.print("[bold red][!] GitHub Actions -> Budowanie ZAKOŃCZONE BŁĘDEM (failure)![/bold red]")
+            console.print("[bold yellow][*] Pobieranie szczegółowych logów błędu z GitHub...[/bold yellow]")
+            
+            error_logs = fetch_github_run_logs(run_id)
+            
             prompt_fix = (
                 f"[AUTOMATYCZNE ZGŁOSZENIE BŁĘDU GITHUB ACTIONS]\n"
-                f"Ostatnia zmiana wywołała błąd w GitHub Actions (status: failure).\n"
-                f"Przeanalizuj zmiany, znajdź przyczynę błędu i podaj poprawione pliki."
+                f"Ostatnia zmiana wywołała błąd w GitHub Actions (status: failure).\n\n"
+                f"OTO POBRANE LOGI BŁĘDU Z GITHUB ACTIONS:\n"
+                f"```\n{error_logs}\n```\n\n"
+                f"Przeanalizuj powyzszy błąd, znajdź przyczynę i podaj poprawione pliki."
             )
             return False, prompt_fix
 
@@ -180,42 +221,55 @@ async def git_sync_and_monitor(client) -> tuple[bool, str]:
 async def send_prompt_with_spinner(client, prompt_text: str):
     response_text = ""
     success = False
-    start_time = time.time()
+    max_retries = 3
+    retry_delay = 5
 
-    async def send_task():
-        nonlocal response_text, success
-        chat = client.start_chat()
-        response = await chat.send_message(prompt_text)
-        response_text = response.text if hasattr(response, "text") else str(response)
-        success = True
+    for attempt in range(max_retries):
+        start_time = time.time()
+        
+        async def send_task():
+            nonlocal response_text, success
+            chat = client.start_chat()
+            response = await chat.send_message(prompt_text)
+            response_text = response.text if hasattr(response, "text") else str(response)
+            success = True
 
-    task = asyncio.create_task(send_task())
+        task = asyncio.create_task(send_task())
 
-    with Live(console=console, refresh_per_second=4) as live:
-        while not task.done():
-            elapsed = time.time() - start_time
-            live.update(f"[bold cyan][*] Wysyłanie zapytania przez sesję Pro... [yellow]({elapsed:.1f}s)[/yellow][/bold cyan]")
-            await asyncio.sleep(0.25)
+        with Live(console=console, refresh_per_second=4) as live:
+            while not task.done():
+                elapsed = time.time() - start_time
+                live.update(f"[bold cyan][*] Wysyłanie zapytania przez sesję Pro (próba {attempt + 1}/{max_retries})... [yellow]({elapsed:.1f}s)[/yellow][/bold cyan]")
+                await asyncio.sleep(0.25)
 
-    elapsed = time.time() - start_time
-    if success:
-        console.print(f"[bold green][ok] Odpowiedź odebrana w {elapsed:.2f} s[/bold green]")
-        if response_text:
-            console.print("\n[bold cyan]Gemini >[/bold cyan]")
-            console.print(Markdown(response_text))
+        elapsed = time.time() - start_time
+        
+        if success:
+            console.print(f"[bold green][ok] Odpowiedź odebrana w {elapsed:.2f} s[/bold green]")
+            if response_text:
+                console.print("\n[bold cyan]Gemini >[/bold cyan]")
+                console.print(Markdown(response_text))
 
-            parsed_files = parse_multi_file_code(response_text)
-            if parsed_files:
-                console.print(f"\n[bold yellow][*] Wykryto {len(parsed_files)} plik(i) do automatycznego zapisu:[/bold yellow]")
-                apply_file_changes(parsed_files)
-                console.print("[bold green][ok] Pliki wdrożone w projekcie.[/bold green]")
-                
-                is_ok, auto_fix_prompt = await git_sync_and_monitor(client)
-                if not is_ok and auto_fix_prompt:
-                    await send_prompt_with_spinner(client, auto_fix_prompt)
-    else:
-        if task.exception():
-            console.print(f"[bold red][!] Błąd zapytania po {elapsed:.1f}s: {task.exception()}[/bold red]")
+                parsed_files = parse_multi_file_code(response_text)
+                if parsed_files:
+                    console.print(f"\n[bold yellow][*] Wykryto {len(parsed_files)} plik(i) do automatycznego zapisu:[/bold yellow]")
+                    apply_file_changes(parsed_files)
+                    console.print("[bold green][ok] Pliki wdrożone w projekcie.[/bold green]")
+                    
+                    is_ok, auto_fix_prompt = await git_sync_and_monitor(client)
+                    if not is_ok and auto_fix_prompt:
+                        await send_prompt_with_spinner(client, auto_fix_prompt)
+            break
+            
+        else:
+            error_msg = str(task.exception())
+            if "429" in error_msg:
+                console.print(f"[bold yellow][!] Błąd 429: Przekroczono limit zapytań. Ponawianie za {retry_delay}s...[/bold yellow]")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
+            else:
+                console.print(f"[bold red][!] Błąd zapytania po {elapsed:.1f}s: {error_msg}[/bold red]")
+                break
 
 async def main():
     ensure_valid_cwd()

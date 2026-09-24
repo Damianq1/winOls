@@ -1,37 +1,61 @@
 package com.winols.app.edit
 
 import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.DataType
 import com.winols.app.model.MapDefinition
 
 class MapEditor(private val bufferManager: BinaryBufferManager) {
 
-    fun getPhysicalValues(map: MapDefinition): Array<DoubleArray> {
-        val result = Array(map.rows) { DoubleArray(map.columns) }
-        var currentAddr = map.startAddress
+    fun readRawValue(map: MapDefinition, row: Int, col: Int): Double {
+        val cellOffset = map.startOffset + ((row * map.columns) + col) * map.dataType.byteSize
+        return when (map.dataType) {
+            DataType.UBYTE -> bufferManager.getUByte(cellOffset).toDouble()
+            DataType.SBYTE -> bufferManager.getByte(cellOffset).toDouble()
+            DataType.USHORT -> bufferManager.getUShort(cellOffset, map.byteOrder).toDouble()
+            DataType.SSHORT -> bufferManager.getShort(cellOffset, map.byteOrder).toDouble()
+            DataType.UINT -> (bufferManager.getInt(cellOffset, map.byteOrder).toLong() and 0xFFFFFFFFL).toDouble()
+            DataType.SINT -> bufferManager.getInt(cellOffset, map.byteOrder).toDouble()
+            DataType.FLOAT -> java.lang.Float.intBitsToFloat(bufferManager.getInt(cellOffset, map.byteOrder)).toDouble()
+        }
+    }
 
-        for (r in 0 until map.rows) {
-            for (c in 0 until map.columns) {
-                val rawValue = bufferManager.readValue(currentAddr, map.dataType)
-                result[r][c] = rawValue * map.factor + map.offset
-                currentAddr += map.dataType.byteSize
+    fun readPhysicalValue(map: MapDefinition, row: Int, col: Int): Double {
+        val raw = readRawValue(map, row, col)
+        return raw * map.factor + map.offset
+    }
+
+    fun writePhysicalValue(map: MapDefinition, row: Int, col: Int, physicalValue: Double) {
+        val raw = (physicalValue - map.offset) / map.factor
+        val cellOffset = map.startOffset + ((row * map.columns) + col) * map.dataType.byteSize
+
+        when (map.dataType) {
+            DataType.UBYTE, DataType.SBYTE -> {
+                bufferManager.setByte(cellOffset, raw.toInt().toByte())
+            }
+            DataType.USHORT, DataType.SSHORT -> {
+                bufferManager.setShort(cellOffset, raw.toInt().toShort(), map.byteOrder)
+            }
+            DataType.UINT, DataType.SINT -> {
+                bufferManager.setInt(cellOffset, raw.toInt(), map.byteOrder)
+            }
+            DataType.FLOAT -> {
+                val bits = java.lang.Float.floatToIntBits(raw.toFloat())
+                bufferManager.setInt(cellOffset, bits, map.byteOrder)
             }
         }
-        return result
     }
 
-    fun setPhysicalValue(map: MapDefinition, row: Int, col: Int, physicalValue: Double) {
-        require(row in 0 until map.rows && col in 0 until map.columns) { "Cell indices out of bounds" }
-        val targetAddr = map.startAddress + (row * map.columns + col) * map.dataType.byteSize
-        val rawValue = (physicalValue - map.offset) / map.factor
-        bufferManager.writeValue(targetAddr, map.dataType, rawValue)
+    fun readMatrix(map: MapDefinition): Array<DoubleArray> {
+        return Array(map.rows) { r ->
+            DoubleArray(map.columns) { c ->
+                readPhysicalValue(map, r, c)
+            }
+        }
     }
 
-    fun applyPercentageOffset(map: MapDefinition, row: Int, col: Int, percentDelta: Double) {
-        val targetAddr = map.startAddress + (row * map.columns + col) * map.dataType.byteSize
-        val currentRaw = bufferManager.readValue(targetAddr, map.dataType)
-        val currentPhysical = currentRaw * map.factor + map.offset
-        val newPhysical = currentPhysical * (1.0 + percentDelta / 100.0)
-        val newRaw = (newPhysical - map.offset) / map.factor
-        bufferManager.writeValue(targetAddr, map.dataType, newRaw)
+    fun applyDeltaPercentage(map: MapDefinition, row: Int, col: Int, percentage: Double) {
+        val current = readPhysicalValue(map, row, col)
+        val updated = current * (1.0 + (percentage / 100.0))
+        writePhysicalValue(map, row, col, updated)
     }
 }

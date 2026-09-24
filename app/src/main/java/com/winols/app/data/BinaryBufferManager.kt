@@ -1,112 +1,64 @@
 package com.winols.app.data
 
 import com.winols.app.model.DataType
+import com.winols.app.model.Endianness
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-class BinaryBufferManager(private var buffer: ByteArray) {
+class BinaryBufferManager(private val buffer: ByteArray) {
 
-    constructor(size: Int) : this(ByteArray(size))
+    val size: Int get() = buffer.size
 
-    val size: Int
-        get() = buffer.size
+    constructor(file: File) : this(file.readBytes())
 
-    fun getRawBytes(): ByteArray = buffer.copyOf()
-
-    fun loadFromFile(file: File) {
-        buffer = file.readBytes()
+    fun readByte(offset: Long): Byte {
+        checkBounds(offset, 1)
+        return buffer[offset.toInt()]
     }
 
-    fun saveToFile(file: File) {
-        file.writeBytes(buffer)
-    }
+    fun readValue(offset: Long, dataType: DataType, endianness: Endianness): Double {
+        checkBounds(offset, dataType.byteSize)
+        val idx = offset.toInt()
+        val byteBuf = ByteBuffer.wrap(buffer, idx, dataType.byteSize)
+        byteBuf.order(if (endianness == Endianness.LITTLE_ENDIAN) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN)
 
-    fun readValue(address: Int, type: DataType): Double {
-        if (address < 0 || address + type.byteSize > buffer.size) {
-            throw IndexOutOfBoundsException("Address 0x${address.toString(16)} out of bounds for buffer size ${buffer.size}")
-        }
-
-        val bb = ByteBuffer.wrap(buffer, address, type.byteSize)
-        return when (type) {
-            DataType.UBYTE -> (buffer[address].toInt() and 0xFF).toDouble()
-            DataType.SBYTE -> buffer[address].toDouble()
-            DataType.UWORD_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                (bb.short.toInt() and 0xFFFF).toDouble()
-            }
-            DataType.SWORD_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                bb.short.toDouble()
-            }
-            DataType.UWORD_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                (bb.short.toInt() and 0xFFFF).toDouble()
-            }
-            DataType.SWORD_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                bb.short.toDouble()
-            }
-            DataType.ULONG_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                (bb.int.toLong() and 0xFFFFFFFFL).toDouble()
-            }
-            DataType.SLONG_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                bb.int.toDouble()
-            }
-            DataType.ULONG_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                (bb.int.toLong() and 0xFFFFFFFFL).toDouble()
-            }
-            DataType.SLONG_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                bb.int.toDouble()
-            }
+        return when (dataType) {
+            DataType.UINT8 -> (buffer[idx].toInt() and 0xFF).toDouble()
+            DataType.INT8 -> buffer[idx].toDouble()
+            DataType.UINT16 -> (byteBuf.short.toInt() and 0xFFFF).toDouble()
+            DataType.INT16 -> byteBuf.short.toDouble()
+            DataType.UINT32 -> (byteBuf.int.toLong() and 0xFFFFFFFFL).toDouble()
+            DataType.INT32 -> byteBuf.int.toDouble()
         }
     }
 
-    fun writeValue(address: Int, type: DataType, rawValue: Double) {
-        if (address < 0 || address + type.byteSize > buffer.size) {
-            throw IndexOutOfBoundsException("Address 0x${address.toString(16)} out of bounds for buffer size ${buffer.size}")
-        }
+    fun writeValue(offset: Long, value: Double, dataType: DataType, endianness: Endianness) {
+        checkBounds(offset, dataType.byteSize)
+        val idx = offset.toInt()
+        val byteBuf = ByteBuffer.allocate(dataType.byteSize)
+        byteBuf.order(if (endianness == Endianness.LITTLE_ENDIAN) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN)
 
-        val bb = ByteBuffer.wrap(buffer, address, type.byteSize)
-        when (type) {
-            DataType.UBYTE -> buffer[address] = rawValue.toInt().toByte()
-            DataType.SBYTE -> buffer[address] = rawValue.toInt().toByte()
-            DataType.UWORD_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                bb.putShort(rawValue.toInt().toShort())
+        when (dataType) {
+            DataType.UINT8 -> {
+                buffer[idx] = (value.toInt() and 0xFF).toByte()
             }
-            DataType.SWORD_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                bb.putShort(rawValue.toInt().toShort())
+            DataType.INT8 -> {
+                buffer[idx] = value.toInt().toByte()
             }
-            DataType.UWORD_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                bb.putShort(rawValue.toInt().toShort())
+            DataType.UINT16 -> {
+                byteBuf.putShort((value.toInt() and 0xFFFF).toShort())
+                System.arraycopy(byteBuf.array(), 0, buffer, idx, 2)
             }
-            DataType.SWORD_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                bb.putShort(rawValue.toInt().toShort())
+            DataType.INT16 -> {
+                byteBuf.putShort(value.toInt().toShort())
+                System.arraycopy(byteBuf.array(), 0, buffer, idx, 2)
             }
-            DataType.ULONG_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                bb.putInt(rawValue.toLong().toInt())
-            }
-            DataType.SLONG_LE -> {
-                bb.order(ByteOrder.LITTLE_ENDIAN)
-                bb.putInt(rawValue.toInt())
-            }
-            DataType.ULONG_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                bb.putInt(rawValue.toLong().toInt())
-            }
-            DataType.SLONG_BE -> {
-                bb.order(ByteOrder.BIG_ENDIAN)
-                bb.putInt(rawValue.toInt())
-            }
-        }
-    }
-}
+            DataType.UINT32 -> {
+                byteBuf.putInt((value.toLong() and 0xFFFFFFFFL).toInt())
+                System.arraycopy(byteBuf.array(), 0, buffer, idx, 4)
+            }Oto szkielet architektoniczny i implementacja kluczowych modułów silnika WinOLS w Kotlinie, oparta na wykrytych w projekcie plikach (`BinaryBufferManager`, `MapDefinition`, `MapEditor`, `MapFinderEngine`, `ChecksumEngine`, `BinModel`).
+
+---
+
+### app/src/main/java/com/winols/app/data/BinaryBufferManager.kt
