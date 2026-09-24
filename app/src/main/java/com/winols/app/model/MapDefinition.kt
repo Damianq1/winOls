@@ -1,18 +1,17 @@
 package com.winols.app.model
 
-import java.nio.ByteOrder
-
 enum class DataType(val byteSize: Int) {
-    UBYTE(1),
-    SBYTE(1),
-    USHORT(2),
-    SSHORT(2),
-    UINT(4),
-    SINT(4),
-    FLOAT(4)
+    UINT8(1),
+    INT8(1),
+    UINT16_LE(2),
+    UINT16_BE(2),
+    INT16_LE(2),
+    INT16_BE(2),
+    UINT32_LE(4),
+    UINT32_BE(4)
 }
 
-enum class MapDimension {
+enum class MapOrganization {
     ONE_D,
     TWO_D,
     THREE_D
@@ -21,25 +20,23 @@ enum class MapDimension {
 data class AxisDefinition(
     val name: String,
     val unit: String = "",
-    val startOffset: Int = 0,
-    val length: Int = 0,
-    val dataType: DataType = DataType.USHORT,
+    val startAddress: Long,
+    val length: Int,
+    val dataType: DataType = DataType.UINT16_LE,
     val factor: Double = 1.0,
     val offset: Double = 0.0,
-    val isExternal: Boolean = false,
-    val byteOrder: ByteOrder = ByteOrder.LITTLE_ENDIAN
+    val isShared: Boolean = false
 )
 
 data class MapDefinition(
     val id: String,
     val name: String,
     val description: String = "",
-    val startOffset: Int,
-    val columns: Int,
-    val rows: Int = 1,
-    val dimension: MapDimension = if (rows > 1) MapDimension.THREE_D else MapDimension.TWO_D,
-    val dataType: DataType = DataType.USHORT,
-    val byteOrder: ByteOrder = ByteOrder.LITTLE_ENDIAN,
+    val organization: MapOrganization,
+    val startAddress: Long,
+    val rows: Int,
+    val cols: Int,
+    val cellDataType: DataType = DataType.UINT16_LE,
     val factor: Double = 1.0,
     val offset: Double = 0.0,
     val unit: String = "",
@@ -47,5 +44,5 @@ data class MapDefinition(
     val yAxis: AxisDefinition? = null
 ) {
     val totalBytes: Int
-        get() = columns * rows * dataType.byteSize
+        get() = rows * cols * cellDataType.byteSize
 }

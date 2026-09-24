@@ -1,64 +1,101 @@
 package com.winols.app.data
 
-import com.winols.app.model.DataType
+import com.winols.app.model.BitWidth
 import com.winols.app.model.Endianness
-import java.io.File
+import com.winols.app.model.HexViewConfig
+import com.winols.app.model.SignMode
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-class BinaryBufferManager(private val buffer: ByteArray) {
+class BinaryBufferManager(private var data: ByteArray) {
 
-    val size: Int get() = buffer.size
+    val size: Int
+        get() = data.size
 
-    constructor(file: File) : this(file.readBytes())
+    fun getRawBytes(): ByteArray = data
 
-    fun readByte(offset: Long): Byte {
-        checkBounds(offset, 1)
-        return buffer[offset.toInt()]
+    fun readValue(offset: Int, config: HexViewConfig): Number {
+        return readValue(offset, config.bitWidth, config.endianness, config.signMode)
     }
 
-    fun readValue(offset: Long, dataType: DataType, endianness: Endianness): Double {
-        checkBounds(offset, dataType.byteSize)
-        val idx = offset.toInt()
-        val byteBuf = ByteBuffer.wrap(buffer, idx, dataType.byteSize)
-        byteBuf.order(if (endianness == Endianness.LITTLE_ENDIAN) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN)
+    fun readValue(
+        offset: Int,
+        bitWidth: BitWidth,
+        endianness: Endianness,
+        signMode: SignMode
+    ): Number {
+        require(offset in 0..(data.size - bitWidth.bytesCount)) {
+            "Offset $offset out of bounds for buffer of size ${data.size}"
+        }
 
-        return when (dataType) {
-            DataType.UINT8 -> (buffer[idx].toInt() and 0xFF).toDouble()
-            DataType.INT8 -> buffer[idx].toDouble()
-            DataType.UINT16 -> (byteBuf.short.toInt() and 0xFFFF).toDouble()
-            DataType.INT16 -> byteBuf.short.toDouble()
-            DataType.UINT32 -> (byteBuf.int.toLong() and 0xFFFFFFFFL).toDouble()
-            DataType.INT32 -> byteBuf.int.toDouble()
+        val buffer = ByteBuffer.wrap(data, offset, bitWidth.bytesCount).apply {
+            order(endianness.byteOrder)
+        }
+
+        return when (bitWidth) {
+            BitWidth.BIT_8 -> {
+                val b = buffer.get()
+                if (signMode == SignMode.SIGNED) b else b.toUByte().toInt()
+            }
+            BitWidth.BIT_16 -> {
+                val s = buffer.short
+                if (signMode == SignMode.SIGNED) s else s.toUShort().toInt()
+            }
+            BitWidth.BIT_32 -> {
+                val i = buffer.int
+                if (signMode == SignMode.SIGNED) i else i.toUInt().toLong()
+            }
         }
     }
 
-    fun writeValue(offset: Long, value: Double, dataType: DataType, endianness: Endianness) {
-        checkBounds(offset, dataType.byteSize)
-        val idx = offset.toInt()
-        val byteBuf = ByteBuffer.allocate(dataType.byteSize)
-        byteBuf.order(if (endianness == Endianness.LITTLE_ENDIAN) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN)
+    fun writeValue(offset: Int, value: Number, config: HexViewConfig) {
+        writeValue(offset, value, config.bitWidth, config.endianness, config.signMode)
+    }
 
-        when (dataType) {
-            DataType.UINT8 -> {
-                buffer[idx] = (value.toInt() and 0xFF).toByte()
-            }
-            DataType.INT8 -> {
-                buffer[idx] = value.toInt().toByte()
-            }
-            DataType.UINT16 -> {
-                byteBuf.putShort((value.toInt() and 0xFFFF).toShort())
-                System.arraycopy(byteBuf.array(), 0, buffer, idx, 2)
-            }
-            DataType.INT16 -> {
-                byteBuf.putShort(value.toInt().toShort())
-                System.arraycopy(byteBuf.array(), 0, buffer, idx, 2)
-            }
-            DataType.UINT32 -> {
-                byteBuf.putInt((value.toLong() and 0xFFFFFFFFL).toInt())
-                System.arraycopy(byteBuf.array(), 0, buffer, idx, 4)
-            }Oto szkielet architektoniczny i implementacja kluczowych modułów silnika WinOLS w Kotlinie, oparta na wykrytych w projekcie plikach (`BinaryBufferManager`, `MapDefinition`, `MapEditor`, `MapFinderEngine`, `ChecksumEngine`, `BinModel`).
+    fun writeValue(
+        offset: Int,
+        value: Number,
+        bitWidth: BitWidth,
+        endianness: Endianness,
+        signMode: SignMode
+    ) {
+        require(offset in 0..(data.size - bitWidth.bytesCount)) {
+            "Offset $offset out of bounds for buffer of size ${data.size}"
+        }
 
----
+        val buffer = ByteBuffer.allocate(bitWidth.bytesCount).apply {
+            order(endianness.byteOrder)
+        }
 
-### app/src/main/java/com/winols/app/data/BinaryBufferManager.kt
+        when (bitWidth) {
+            BitWidth.BIT_8 -> {
+                val byteVal = value.toLong().toByte()
+                buffer.put(byteVal)
+            }
+            BitWidth.BIT_16 -> {
+                val shortVal = value.toLong().toShort()
+                buffer.putShort(shortVal)
+            }
+            BitWidth.BIT_32 -> {
+                val intVal = value.toLong().toInt()
+                buffer.putInt(intVal)
+            }
+        }
+
+        System.arraycopy(buffer.array(), 0, data, offset, bitWidth.bytesCount)
+    }
+
+    fun readHexDumpLine(startOffset: Int, bytesPerLine: Int, config: HexViewConfig): List<String> {
+        val result = mutableListOf<String>()
+        val step = config.bitWidth.bytesCount
+        var curr = startOffset
+        val limit = (startOffset + bytesPerLine).coerceAtMost(data.size)
+
+        while (curr + step <= limit) {
+            val raw = readValue(curr, config.bitWidth, config.endianness, SignMode.UNSIGNED).toLong()
+            result.add(config.formatRawValue(raw))
+            curr += step
+        }
+        return result
+    }
+}
