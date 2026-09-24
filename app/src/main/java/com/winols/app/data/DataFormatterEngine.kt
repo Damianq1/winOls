@@ -1,91 +1,85 @@
 package com.winols.app.data
 
-import com.winols.app.model.CellDataType
-import com.winols.app.model.MapDefinition
-import java.nio.ByteBuffer
+import com.winols.app.model.DataRepresentation
 import java.nio.ByteOrder
 
 /**
- * Wysokowydajny silnik formatowania i dwukierunkowej konwersji wartości
- * RAW (bajtowych) oraz fizycznych (skalowanych) bezpośrednio na buforach ByteBuffer.
+ * Bezstanowy silnik konwersji pomiędzy surowymi bajtami a formatem HEX / wartościami fizycznymi.
  */
 object DataFormatterEngine {
 
-    /**
-     * Wyciąga surową liczbę całkowitą (uwzględniając znak i kolejność bajtów) z bufora pod danym adresem.
-     */
-    fun readRawValue(buffer: ByteBuffer, address: Int, dataType: CellDataType, order: ByteOrder): Long {
-        buffer.order(order)
-        return when (dataType) {
-            CellDataType.UBYTE -> (buffer.get(address).toInt() and 0xFF).toLong()
-            CellDataType.SBYTE -> buffer.get(address).toLong()
-            CellDataType.UWORD -> (buffer.getShort(address).toInt() and 0xFFFF).toLong()
-            CellDataType.SWORD -> buffer.getShort(address).toLong()
-            CellDataType.UDWORD -> buffer.getInt(address).toLong() and 0xFFFFFFFFL
-            CellDataType.SDWORD -> buffer.getInt(address).toLong()
-        }
-    }
-
-    /**
-     * Zapisuje wyliczoną wartość surową (RAW) bezpośrednio do bufora pod dany adres.
-     */
-    fun writeRawValue(buffer: ByteBuffer, address: Int, rawValue: Long, dataType: CellDataType, order: ByteOrder) {
-        buffer.order(order)
-        when (dataType) {
-            CellDataType.UBYTE -> buffer.put(address, (rawValue and 0xFF).toByte())
-            CellDataType.SBYTE -> buffer.put(address, rawValue.toByte())
-            CellDataType.UWORD -> buffer.putShort(address, (rawValue and 0xFFFF).toShort())
-            CellDataType.SWORD -> buffer.putShort(address, rawValue.toShort())
-            CellDataType.UDWORD -> buffer.putInt(address, (rawValue and 0xFFFFFFFFL).toInt())
-            CellDataType.SDWORD -> buffer.putInt(address, rawValue.toInt())
-        }
-    }
-
-    /**
-     * Wczytuje całą mapę do dwuwymiarowej tablicy wartości fizycznych:
-     * Physical = (RAW * Factor) + Offset
-     */
-    fun extractPhysicalMatrix(buffer: ByteBuffer, mapDef: MapDefinition): Array<DoubleArray> {
-        val matrix = Array(mapDef.rows) { DoubleArray(mapDef.columns) }
-        var currentAddress = mapDef.startAddress
-        val step = mapDef.dataType.byteSize
-
-        for (r in 0 until mapDef.rows) {
-            for (c in 0 until mapDef.columns) {
-                val raw = readRawValue(buffer, currentAddress, mapDef.dataType, mapDef.byteOrder)
-                matrix[r][c] = mapDef.rawToPhysical(raw)
-                currentAddress += step
+    fun parseRawValue(
+        buffer: BinaryBufferManager,
+        offset: Int,
+        representation: DataRepresentation
+    ): Long {
+        val isLE = representation.byteOrder == ByteOrder.LITTLE_ENDIAN
+        return when (representation.bitWidth) {
+            8 -> {
+                val b = buffer.getByte(offset).toLong()
+                if (representation.isSigned) b else (b and 0xFFL)
             }
-        }
-        return matrix
-    }
-
-    /**
-     * Zapisuje zmodyfikowaną macierz wartości fizycznych z powrotem do bufora binarnego jako RAW.
-     */
-    fun applyPhysicalMatrix(buffer: ByteBuffer, mapDef: MapDefinition, matrix: Array<DoubleArray>) {
-        var currentAddress = mapDef.startAddress
-        val step = mapDef.dataType.byteSize
-
-        for (r in 0 until mapDef.rows) {
-            for (c in 0 until mapDef.columns) {
-                val physicalVal = matrix[r][c]
-                val rawVal = mapDef.physicalToRaw(physicalVal)
-                writeRawValue(buffer, currentAddress, rawVal, mapDef.dataType, mapDef.byteOrder)
-                currentAddress += step
+            16 -> {
+                val b0 = buffer.getByte(offset).toLong() and 0xFFL
+                val b1 = buffer.getByte(offset + 1).toLong() and 0xFFL
+                val raw = if (isLE) (b1 shl 8) or b0 else (b0 shl 8) or b1
+                if (representation.isSigned) raw.toShort().toLong() else raw
             }
+            32 -> {
+                val b0 = buffer.getByte(offset).toLong() and 0xFFL
+                val b1 = buffer.getByte(offset + 1).toLong() and 0xFFL
+                val b2 = buffer.getByte(offset + 2).toLong() and 0xFFL
+                val b3 = buffer.getByte(offset + 3).toLong() and 0xFFL
+                val raw = if (isLE) {
+                    (b3 shl 24) or (b2 shl 16) or (b1 shl 8) or b0
+                } else {
+                    (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
+                }
+                if (representation.isSigned) raw.toInt().toLong() else raw
+            }
+            else -> throw IllegalArgumentException("Nieobsługiwana szerokość bitowa: ${representation.bitWidth}")
         }
     }
 
-    /**
-     * Predefiniowane profile przeliczników często spotykanych w sterownikach Bosch (EDC15/EDC16/EDC17/MED9).
-     */
-    object WellKnownConversions {
-        fun boostPressureMbar(def: MapDefinition) = def.copy(factor = 1.0, offset = 0.0, unit = "mbar", decimals = 0)
-        fun boostPressureBar(def: MapDefinition) = def.copy(factor = 0.01, offset = 0.0, unit = "bar", decimals = 2)
-        fun temperatureEcuStandard(def: MapDefinition) = def.copy(factor = 0.25, offset = -40.0, unit = "°C", decimals = 1)
-        fun injectionQuantityMg(def: MapDefinition) = def.copy(factor = 0.01, offset = 0.0, unit = "mg/hub", decimals = 2)
-        fun engineSpeedRpm(def: MapDefinition) = def.copy(factor = 0.5, offset = 0.0, unit = "RPM", decimals = 0)
-        fun throttlePercentage(def: MapDefinition) = def.copy(factor = 0.0030517578, offset = 0.0, unit = "%", decimals = 1) // 100/32768
+    fun rawToPhysical(rawValue: Long, factor: Double, offset: Double): Double {
+        return (rawValue * factor) + offset
+    }
+
+    fun physicalToRaw(physicalValue: Double, factor: Double, offset: Double): Long {
+        if (factor == 0.0) return 0L
+        return Math.round((physicalValue - offset) / factor)
+    }
+
+    fun encodeValue(
+        value: Long,
+        bitWidth: Int,
+        byteOrder: ByteOrder
+    ): ByteArray {
+        val isLE = byteOrder == ByteOrder.LITTLE_ENDIAN
+        return when (bitWidth) {
+            8 -> byteArrayOf(value.toByte())
+            16 -> {
+                val b0 = (value and 0xFFL).toByte()
+                val b1 = ((value shr 8) and 0xFFL).toByte()
+                if (isLE) byteArrayOf(b0, b1) else byteArrayOf(b1, b0)
+            }
+            32 -> {
+                val b0 = (value and 0xFFL).toByte()
+                val b1 = ((value shr 8) and 0xFFL).toByte()
+                val b2 = ((value shr 16) and 0xFFL).toByte()
+                val b3 = ((value shr 24) and 0xFFL).toByte()
+                if (isLE) byteArrayOf(b0, b1, b2, b3) else byteArrayOf(b3, b2, b1, b0)
+            }
+            else -> throw IllegalArgumentException("Nieobsługiwana szerokość bitowa: $bitWidth")
+        }
+    }
+
+    fun formatAsHex(buffer: BinaryBufferManager, offset: Int, length: Int): String {
+        val bytes = buffer.getBytes(offset, length)
+        val sb = java.lang.StringBuilder(bytes.size * 3)
+        for (b in bytes) {
+            sb.append(String.format("%02X ", b))
+        }
+        return sb.toString().trimEnd()
     }
 }

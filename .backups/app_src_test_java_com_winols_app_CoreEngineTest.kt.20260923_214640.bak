@@ -1,0 +1,57 @@
+package com.winols.app
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.edit.MapEditor
+import com.winols.app.engine.ChecksumEngine
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+class CoreEngineTest {
+
+    private lateinit var bufferManager: BinaryBufferManager
+    private lateinit var mapEditor: MapEditor
+
+    @Before
+    fun setUp() {
+        bufferManager = BinaryBufferManager(1024)
+        mapEditor = MapEditor(bufferManager)
+    }
+
+    @Test
+    fun testBufferReadWrite() {
+        bufferManager.writeByte(0x10, 0xAB)
+        assertEquals(0xAB, bufferManager.readByte(0x10))
+
+        bufferManager.writeByte(0x20, 0x12)
+        bufferManager.writeByte(0x21, 0x34)
+        assertEquals(0x1234, bufferManager.readWord(0x20, bigEndian = true))
+        assertEquals(0x3412, bufferManager.readWord(0x20, bigEndian = false))
+    }
+
+    @Test
+    fun testMapEditorCellModification() {
+        val map = MapDefinition(
+            id = "TURBO_MAP",
+            name = "Turbo Pressure",
+            address = 0x50,
+            rows = 2,
+            columns = 2,
+            dataType = DataType.UWORD_BE,
+            factor = 0.1,
+            offset = 0.0
+        )
+
+        mapEditor.setCellValue(map, 0, 0, 150.0) // 1500 surowo -> 0x05DC
+        val readBack = mapEditor.getCellValue(map, 0, 0)
+        assertEquals(150.0, readBack, 0.01)
+        assertEquals(0x05, bufferManager.readByte(0x50))
+        assertEquals(0xDC, bufferManager.readByte(0x51))
+    }
+
+    @Test
+    fun testChecksumCalculationAndPatch() {
+        valOto implementacja testów jednostkowych weryfikujących poprawność działania kluczowych silników aplikacji (`ChecksumEngine`, `MapFinderEngine`, `BinaryBufferManager`, `IntelHex` oraz `MapEditor`).

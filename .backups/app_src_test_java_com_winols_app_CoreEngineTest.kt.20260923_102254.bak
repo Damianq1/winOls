@@ -1,0 +1,38 @@
+package com.winols.app
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.edit.BulkOperation
+import com.winols.app.edit.MapEditor
+import com.winols.app.engine.*
+import com.winols.app.io.IntelHex
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class CoreEngineTest {
+    @Test fun intelHexRoundTrip() {
+        val source = ByteArray(64) { it.toByte() }
+        val image = IntelHex.parse(IntelHex.encode(source, 0x10000))
+        assertEquals(0x10000L, image.baseAddress)
+        assertArrayEquals(source, image.data)
+    }
+
+    @Test fun bulkEditAndPhysicalScaling() {
+        val buffer = BinaryBufferManager()
+        buffer.load(ByteArray(16) { it.toByte() })
+        val map = MapDefinition(address = 0, rows = 2, columns = 4, dataType = DataType.UBYTE, factor = 0.5, offset = -10.0)
+        val before = MapEditor.readMatrix(buffer, map)[0][0]
+        MapEditor.apply(buffer, map, BulkOperation.ADD, 2.0)
+        assertEquals(before + 2.0, MapEditor.readMatrix(buffer, map)[0][0], 0.001)
+    }
+
+    @Test fun add8Checksum() {
+        val data = ByteArray(10) { it.toByte() }
+        val block = ChecksumBlock(0, 7, 8, Algorithm.ADD_8)
+        ChecksumEngine.correct(data, block)
+        assertTrue(ChecksumEngine.verify(data, block))
+    }
+}

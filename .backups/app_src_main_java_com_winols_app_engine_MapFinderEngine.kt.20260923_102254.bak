@@ -1,0 +1,49 @@
+package com.winols.app.engine
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+class MapFinderEngine(private val bufferManager: BinaryBufferManager) {
+
+    suspend fun scanForPotentialMaps(
+        minCols: Int = 4,
+        maxCols: Int = 16,
+        minRows: Int = 4,
+        maxRows: Int = 16
+    ): List<MapDefinition> = withContext(Dispatchers.Default) {
+        val detected = mutableListOf<MapDefinition>()
+        val totalSize = bufferManager.fileSize
+        if (totalSize < 64) return@withContext detected
+
+        var address = 0L
+        while (address < totalSize - (maxCols * maxRows * 2)) {
+            // Heurystyka: Wykrywanie bloków o powtarzalnych wymiarach Bosch / Siemens (np. nagłówki 0xXX 0xYY)
+            val headerX = bufferManager.readRawValue(address, DataType.UBYTE).toInt()
+            val headerY = bufferManager.readRawValue(address + 1, DataType.UBYTE).toInt()
+
+            if (headerX in minCols..maxCols && headerY in minRows..maxRows) {
+                val dataAddress = address + 2
+                val mapSize = headerX * headerY * 2
+                if (dataAddress + mapSize <= totalSize) {
+                    detected.add(
+                        MapDefinition(
+                            id = "MAP_${java.lang.Long.toHexString(address).uppercase()}",
+                            name = "Potential Map ${headerX}x${headerY} @ 0x${java.lang.Long.toHexString(address).uppercase()}",
+                            address = dataAddress,
+                            columns = headerX,
+                            rows = headerY,
+                            dataType = DataType.UWORD_BE
+                        )
+                    )
+                    address += mapSize + 2
+                    continue
+                }
+            }
+            address += 2
+        }
+        detected
+    }
+}

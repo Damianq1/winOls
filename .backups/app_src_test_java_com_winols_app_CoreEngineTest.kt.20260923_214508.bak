@@ -1,0 +1,62 @@
+package com.winols.app
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.engine.ChecksumBlock
+import com.winols.app.engine.ChecksumEngine
+import com.winols.app.model.DataType
+import com.winols.app.model.Endianness
+import com.winols.app.model.MapDefinition
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import java.io.ByteArrayInputStream
+
+class CoreEngineTest {
+
+    private lateinit var bufferManager: BinaryBufferManager
+    private lateinit var binModel: BinModel
+
+    @Before
+    fun setUp() {
+        bufferManager = BinaryBufferManager()
+        val dummyData = ByteArray(256) { 0 }
+        bufferManager.loadFromStream(ByteArrayInputStream(dummyData))
+        binModel = BinModel(bufferManager)
+    }
+
+    @Test
+    fun testBufferReadWrite() {
+        bufferManager.writeValue(0x10, 0x1234, DataType.UWORD, Endianness.BIG_ENDIAN)
+        val readVal = bufferManager.readValue(0x10, DataType.UWORD, Endianness.BIG_ENDIAN)
+        assertEquals(0x1234L, readVal)
+        assertTrue(bufferManager.isModifiedAt(0x10))
+    }
+
+    @Test
+    fun testPhysicalConversion() {
+        val map = MapDefinition(
+            id = "TEST",
+            name = "Test Map",
+            address = 0x20,
+            rows = 2,
+            columns = 2,
+            dataType = DataType.UWORD,
+            endianness = Endianness.LITTLE_ENDIAN,
+            factor = 0.5,
+            offset = 100.0
+        )
+
+        binModel.setPhysicalValue(map, 0, 0, 150.0)
+        val readBack = binModel.getPhysicalValue(map, 0, 0)
+        assertEquals(150.0, readBack, 0.001)
+    }
+
+    @Test
+    fun testChecksumCalculationAndFix() {
+        val block = ChecksumBlock("Block1", 0x00, 0x08, 0x0A, is16Bit = true, isComplement = true)
+        val engine = ChecksumEngine(bufferManager)
+        engine.fixChecksum(block)
+        assertTrue(engine.verifyBlock(block))
+    }
+}

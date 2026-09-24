@@ -1,0 +1,47 @@
+package com.winols.app.engine
+
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+
+class MapFinderEngine {
+
+    /**
+     * Wyszukuje potencjalne tablice dwuwymiarowe analizując preambuły Bosch/Siemens
+     * lub charakterystyczne skoki wariancji i wymiarowania (np. 16x16, 8x8).
+     */
+    fun scanForMaps(buffer: ByteArray): List<MapDefinition> {
+        val detected = mutableListOf<MapDefinition>()
+        var offset = 0
+        val limit = buffer.size - 64
+
+        while (offset < limit) {
+            // Detekcja nagłówka tablicy typu Bosch (np. 0x3C, Rows, Cols)
+            val rowsCandidate = buffer[offset].toInt() and 0xFF
+            val colsCandidate = buffer[offset + 1].toInt() and 0xFF
+
+            if (isValidDimension(rowsCandidate) && isValidDimension(colsCandidate)) {
+                val mapSize = rowsCandidate * colsCandidate * 2
+                if (offset + 2 + mapSize <= buffer.size) {
+                    val map = MapDefinition(
+                        id = "MAP_${Integer.toHexString(offset).uppercase()}",
+                        name = "Potential Map @ 0x${Integer.toHexString(offset).uppercase()}",
+                        address = offset + 2,
+                        rows = rowsCandidate,
+                        columns = colsCandidate,
+                        dataType = DataType.UWORD_BE
+                    )
+                    detected.add(map)
+                    offset += 2 + mapSize
+                    continue
+                }
+            }
+            offset += 2
+        }
+
+        return detected
+    }
+
+    private fun isValidDimension(value: Int): Boolean {
+        return value in 4..32 && (value % 2 == 0 || value % 4 == 0 || value == 9 || value == 11)
+    }
+}

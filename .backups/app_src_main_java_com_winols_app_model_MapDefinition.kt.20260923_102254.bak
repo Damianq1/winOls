@@ -1,0 +1,46 @@
+package com.winols.app.model
+
+import java.nio.ByteOrder
+
+enum class DataType(val byteSize: Int) {
+    UBYTE(1),
+    SBYTE(1),
+    UWORD_LE(2),
+    SWORD_LE(2),
+    UWORD_BE(2),
+    SWORD_BE(2);
+
+    val is16Bit: Boolean get() = byteSize == 2
+    val byteOrder: ByteOrder get() = if (this == UWORD_BE || this == SWORD_BE) ByteOrder.BIG_ENDIAN else ByteOrder.LITTLE_ENDIAN
+    val isSigned: Boolean get() = this == SBYTE || this == SWORD_LE || this == SWORD_BE
+}
+
+data class AxisDefinition(
+    val name: String,
+    val address: Long,
+    val size: Int,
+    val dataType: DataType = DataType.UWORD_LE,
+    val factor: Double = 1.0,
+    val offset: Double = 0.0,
+    val unit: String = ""
+)
+
+data class MapDefinition(
+    val id: String,
+    val name: String,
+    val address: Long,
+    val columns: Int,
+    val rows: Int,
+    val dataType: DataType = DataType.UWORD_LE,
+    val factor: Double = 1.0,
+    val offset: Double = 0.0,
+    val unit: String = "",
+    val xAxis: AxisDefinition? = null,
+    val yAxis: AxisDefinition? = null
+) {
+    val totalElements: Int get() = columns * rows
+    val byteSize: Int get() = totalElements * dataType.byteSize
+
+    fun rawToPhysical(raw: Double): Double = (raw * factor) + offset
+    fun physicalToRaw(phys: Double): Double = if (factor != 0.0) (phys - offset) / factor else phys
+}

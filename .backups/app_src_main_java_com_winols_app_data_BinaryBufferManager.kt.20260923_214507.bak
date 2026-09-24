@@ -1,0 +1,110 @@
+package com.winols.app.data
+
+import com.winols.app.model.DataType
+import com.winols.app.model.Endianness
+import java.io.File
+import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+class BinaryBufferManager {
+    private var originalData: ByteArray = ByteArray(0)
+    private var modifiedData: ByteArray = ByteArray(0)
+
+    val size: Int
+        get() = modifiedData.size
+
+    val isLoaded: Boolean
+        get() = modifiedData.isNotEmpty()
+
+    fun loadFromStream(inputStream: InputStream) {
+        val data = inputStream.readBytes()
+        originalData = data.clone()
+        modifiedData = data.clone()
+    }
+
+    fun loadFromFile(file: File) {
+        val data = file.readBytes()
+        originalData = data.clone()
+        modifiedData = data.clone()
+    }
+
+    fun getOriginalBytes(): ByteArray = originalData.clone()
+    fun getModifiedBytes(): ByteArray = modifiedData.clone()
+
+    fun getRawByte(offset: Int, useOriginal: Boolean = false): Byte {
+        val buffer = if (useOriginal) originalData else modifiedData
+        if (offset !in buffer.indices) return 0
+        return buffer[offset]
+    }
+
+    fun setRawByte(offset: Int, value: Byte) {
+        if (offset in modifiedData.indices) {
+            modifiedData[offset] = value
+        }
+    }
+
+    fun readValue(
+        offset: Int,
+        dataType: DataType,
+        endianness: Endianness,
+        useOriginal: Boolean = false
+    ): Long {
+        val buffer = if (useOriginal) originalData else modifiedData
+        if (offset < 0 || offset + dataType.byteSize > buffer.size) return 0L
+
+        val order = if (endianness == Endianness.LITTLE_ENDIAN) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
+        val byteBuf = ByteBuffer.wrap(buffer, offset, dataType.byteSize).order(order)
+
+        return when (dataType) {
+            DataType.UBYTE -> (byteBuf.get().toInt() and 0xFF).toLong()
+            DataType.SBYTE -> byteBuf.get().toLong()
+            DataType.UWORD -> (byteBuf.short.toInt() and 0xFFFF).toLong()
+            DataType.SWORD -> byteBuf.short.toLong()
+            DataType.UDWORD -> (byteBuf.int.toLong() and 0xFFFFFFFFL)
+            DataType.SDWORD -> byteBuf.int.toLong()
+        }
+    }
+
+    fun writeValue(
+        offset: Int,
+        value: Long,
+        dataType: DataType,
+        endianness: Endianness
+    ) {
+        if (offset < 0 || offset + dataType.byteSize > modifiedData.size) return
+
+        val order = if (endianness == Endianness.LITTLE_ENDIAN) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
+        val byteBuf = ByteBuffer.allocate(dataType.byteSize).order(order)
+
+        when (dataType) {
+            DataType.UBYTE -> byteBuf.put(value.toByte())
+            DataType.SBYTE -> byteBuf.put(value.toByte())
+            DataType.UWORD -> byteBuf.putShort(value.toShort())
+            DataType.SWORD -> byteBuf.putShort(value.toShort())
+            DataType.UDWORD -> byteBuf.putInt(value.toInt())
+            DataType.SDWORD -> byteBuf.putInt(value.toInt())
+        }
+
+        System.arraycopy(byteBuf.array(), 0, modifiedData, offset, dataType.byteSize)
+    }
+
+    fun isModifiedAt(offset: Int): Boolean {
+        if (offset !in modifiedData.indices || offset !in originalData.indices) return false
+        return modifiedData[offset] != originalData[offset]
+    }
+
+    fun getDifferences(): List<Int> {
+        val diffs = mutableListOf<Int>()
+        for (i in 0 until minOf(originalData.size, modifiedData.size)) {
+            if (originalData[i] != modifiedData[i]) {
+                diffs.add(i)
+            }
+        }
+        return diffs
+    }
+
+    fun revert() {
+        modifiedData = originalData.clone()
+    }
+}

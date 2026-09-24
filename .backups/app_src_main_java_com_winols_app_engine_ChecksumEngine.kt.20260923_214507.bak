@@ -1,0 +1,60 @@
+package com.winols.app.engine
+
+import com.winols.app.data.BinaryBufferManager
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+data class ChecksumBlock(
+    val name: String,
+    val startAddress: Int,
+    val endAddress: Int,
+    val checksumAddress: Int,
+    val is16Bit: Boolean = true,
+    val isComplement: Boolean = true
+)
+
+class ChecksumEngine(private val bufferManager: BinaryBufferManager) {
+
+    fun calculate16BitSum(start: Int, end: Int): Int {
+        var sum = 0
+        var i = start
+        while (i <= end - 1) {
+            val b0 = bufferManager.getRawByte(i).toInt() and 0xFF
+            val b1 = bufferManager.getRawByte(i + 1).toInt() and 0xFF
+            val word = (b1 shl 8) or b0
+            sum = (sum + word) and 0xFFFF
+            i += 2
+        }
+        return sum
+    }
+
+    fun verifyBlock(block: ChecksumBlock): Boolean {
+        val currentSum = calculate16BitSum(block.startAddress, block.endAddress)
+        val expectedWord = if (block.isComplement) {
+            (0x10000 - currentSum) and 0xFFFF
+        } else {
+            currentSum
+        }
+
+        val storedB0 = bufferManager.getRawByte(block.checksumAddress).toInt() and 0xFF
+        val storedB1 = bufferManager.getRawByte(block.checksumAddress + 1).toInt() and 0xFF
+        val storedWord = (storedB1 shl 8) or storedB0
+
+        return storedWord == expectedWord
+    }
+
+    fun fixChecksum(block: ChecksumBlock) {
+        val currentSum = calculate16BitSum(block.startAddress, block.endAddress)
+        val correctionWord = if (block.isComplement) {
+            (0x10000 - currentSum) and 0xFFFF
+        } else {
+            currentSum
+        }
+
+        val b0 = (correctionWord and 0xFF).toByte()
+        val b1 = ((correctionWord shr 8) and 0xFF).toByte()
+
+        bufferManager.setRawByte(block.checksumAddress, b0)
+        bufferManager.setRawByte(block.checksumAddress + 1, b1)
+    }
+}

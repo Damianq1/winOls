@@ -1,0 +1,44 @@
+package com.winols.app.model
+
+enum class Endianness {
+    LITTLE_ENDIAN,
+    BIG_ENDIAN
+}
+
+enum class DataType(val byteSize: Int) {
+    UBYTE(1),
+    SBYTE(1),
+    UWORD(2),
+    SWORD(2),
+    UDWORD(4),
+    SDWORD(4)
+}
+
+data class AxisDefinition(
+    val name: String,
+    val unit: String,
+    val address: Int,
+    val length: Int,
+    val dataType: DataType = DataType.UWORD,
+    val endianness: Endianness = Endianness.LITTLE_ENDIAN,
+    val factor: Double = 1.0,
+    val offset: Double = 0.0
+)
+
+data class MapDefinition(
+    val id: String,
+    val name: String,
+    val address: Int,
+    val rows: Int,
+    val columns: Int,
+    val dataType: DataType = DataType.UWORD,
+    val endianness: Endianness = Endianness.LITTLE_ENDIAN,
+    val factor: Double = 1.0,
+    val offset: Double = 0.0,
+    val unit: String = "",
+    val xAxis: AxisDefinition? = null,
+    val yAxis: AxisDefinition? = null
+) {
+    val totalBytes: Int
+        get() = rows * columns * dataType.byteSize
+}

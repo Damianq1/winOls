@@ -1,0 +1,77 @@
+package com.winols.app.edit
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import java.nio.ByteOrder
+import kotlin.math.roundToLong
+
+object MapEditor {
+    fun readMatrix(buffer: BinaryBufferManager, map: MapDefinition): Array<DoubleArray> {
+        val out = Array(map.rows) { DoubleArray(map.columns) }
+        val bb = buffer.duplicate(order(map.dataType))
+        for (r in 0 until map.rows) for (c in 0 until map.columns) {
+            val offset = map.address.toInt() + (r * map.columns + c) * map.dataType.byteSize
+            out[r][c] = rawToPhysical(readRaw(bb, offset, map.dataType), map.factor, map.offset)
+        }
+        return out
+    }
+
+    fun rawToPhysical(raw: Long, factor: Double, offset: Double): Double = raw * factor + offset
+
+    fun physicalToRaw(value: Double, factor: Double, offset: Double): Long = if (factor == 0.0) 0 else ((value - offset) / factor).roundToLong()
+
+    fun apply(buffer: BinaryBufferManager, map: MapDefinition, operation: BulkOperation, amount: Double): Int {
+        val bb = buffer.duplicate(order(map.dataType))
+        var count = 0
+        for (r in 0 until map.rows) for (c in 0 until map.columns) {
+            val offset = map.address.toInt() + (r * map.columns + c) * map.dataType.byteSize
+            val raw = readRaw(bb, offset, map.dataType)
+            val physical = rawToPhysical(raw, map.factor, map.offset)
+            val target = when (operation) {
+                BulkOperation.ADD -> physical + amount
+                BulkOperation.SUBTRACT -> physical - amount
+                BulkOperation.PERCENT -> physical * (1.0 + amount / 100.0)
+                BulkOperation.SET -> amount
+            }
+            writeRaw(bb, offset, map.dataType, physicalToRaw(target, map.factor, map.offset))
+            count++
+        }
+        return count
+    }
+
+    fun smooth(buffer: BinaryBufferManager, map: MapDefinition, passes: Int = 1) {
+        repeat(passes.coerceIn(1, 10)) {
+            val m = readMatrix(buffer, map)
+            val smoothed = Array(map.rows) { r -> DoubleArray(map.columns) { c ->
+                var sum = 0.0; var n = 0
+                for (rr in maxOf(0, r - 1)..minOf(map.rows - 1, r + 1)) for (cc in maxOf(0, c - 1)..minOf(map.columns - 1, c + 1)) { sum += m[rr][cc]; n++ }
+                sum / n
+            }}
+            val bb = buffer.duplicate(order(map.dataType))
+            for (r in 0 until map.rows) for (c in 0 until map.columns) {
+                val off = map.address.toInt() + (r * map.columns + c) * map.dataType.byteSize
+                writeRaw(bb, off, map.dataType, physicalToRaw(smoothed[r][c], map.factor, map.offset))
+            }
+        }
+    }
+
+    private fun order(type: DataType) = if (type.name.endsWith("LE")) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN
+    private fun readRaw(bb: java.nio.ByteBuffer, offset: Int, type: DataType): Long = when (type) {
+        DataType.UBYTE -> (bb.get(offset).toInt() and 0xFF).toLong()
+        DataType.SBYTE -> bb.get(offset).toLong()
+        DataType.UWORD_BE, DataType.UWORD_LE -> bb.getShort(offset).toInt().toLong() and 0xFFFF
+        DataType.SWORD_BE, DataType.SWORD_LE -> bb.getShort(offset).toLong()
+        DataType.UDWORD_BE, DataType.UDWORD_LE -> bb.getInt(offset).toLong() and 0xFFFFFFFFL
+        DataType.SDWORD_BE, DataType.SDWORD_LE -> bb.getInt(offset).toLong()
+    }
+    private fun writeRaw(bb: java.nio.ByteBuffer, offset: Int, type: DataType, raw: Long) {
+        when (type) {
+            DataType.UBYTE, DataType.SBYTE -> bb.put(offset, raw.toByte())
+            DataType.UWORD_BE, DataType.UWORD_LE, DataType.SWORD_BE, DataType.SWORD_LE -> bb.putShort(offset, raw.toShort())
+            DataType.UDWORD_BE, DataType.UDWORD_LE, DataType.SDWORD_BE, DataType.SDWORD_LE -> bb.putInt(offset, raw.toInt())
+        }
+    }
+}
+
+enum class BulkOperation { ADD, SUBTRACT, PERCENT, SET }

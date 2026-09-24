@@ -6,24 +6,23 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.util.AttributeSet
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
-import com.winols.app.data.DataFormatterEngine
-import com.winols.app.model.ViewConfiguration
-import java.nio.ByteBuffer
-import java.util.Locale
+import android.widget.Scroller
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.BitDepth
+import com.winols.app.model.DataRepresentation
+import com.winols.app.model.ValueType
 
-/**
- * Zoptymalizowany Custom View do płynnego renderowania heksadecymalnego/tabelarycznego.
- */
 class HexGridView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private var buffer: ByteBuffer? = null
-    private var config = ViewConfiguration()
-    private var startOffset: Int = 0
+    private var bufferManager: BinaryBufferManager? = null
+    private var representation: DataRepresentation = DataRepresentation(BitDepth.BITS_8, ValueType.HEX)
 
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -32,75 +31,95 @@ class HexGridView @JvmOverloads constructor(
     }
 
     private val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.LTGRAY
-        textSize = 28f
-        typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-    }
-
-    private val offsetPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.CYAN
-        textSize = 30f
+        color = Color.parseColor("#4CAF50")
+        textSize = 32f
         typeface = Typeface.MONOSPACE
     }
 
-    fun bindBuffer(buf: ByteBuffer?, initialOffset: Int = 0) {
-        this.buffer = buf
-        this.startOffset = initialOffset
+    private val modifiedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FF5252")
+        textSize = 32f
+        typeface = Typeface.MONOSPACE
+    }
+
+    private val rowHeight = 44f
+    private val colWidth = 64f
+    private val addressOffset = 180f
+    private val bytesPerRow = 16
+
+    private val scroller = Scroller(context)
+    private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+            scrollBy(0, distanceY.toInt())
+            return true
+        }
+
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
+            val totalRows = ((bufferManager?.capacity ?: 0) + bytesPerRow - 1) / bytesPerRow
+            val maxScrollY = Math.max(0, (totalRows * rowHeight).toInt() - height)
+            scroller.fling(scrollX, scrollY, 0, -velocityY.toInt(), 0, 0, 0, maxScrollY)
+            postInvalidateOnAnimation()
+            return true
+        }
+    })
+
+    fun setBufferManager(manager: BinaryBufferManager) {
+        this.bufferManager = manager
         invalidate()
     }
 
-    fun applyConfiguration(newConfig: ViewConfiguration) {
-        this.config = newConfig
+    fun setRepresentation(rep: DataRepresentation) {
+        this.representation = rep
         invalidate()
     }
 
-    fun scrollToOffset(offset: Int) {
-        this.startOffset = offset.coerceAtLeast(0)
-        invalidate()
+    override fun computeScroll() {
+        if (scroller.computeScrollOffset()) {
+            scrollTo(scroller.currX, scroller.currY)
+            postInvalidateOnAnimation()
+        }
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        return gestureDetector.onTouchEvent(event) || super.onTouchEvent(event)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val buf = buffer ?: return
+        val manager = bufferManager ?: return
+        val totalBytes = manager.capacity
+        if (totalBytes == 0) return
 
-        val step = config.wordSize.bytesCount
-        val cols = config.columnsCount
-        val rowHeight = 48f
-        val colWidth = if (config.isHexDisplay) (config.wordSize.bytesCount * 28f + 30f) else 120f
-        val offsetColWidth = 180f
+        val startRow = Math.max(0, (scrollY / rowHeight).toInt())
+        val endRow = Math.min((totalBytes + bytesPerRow - 1) / bytesPerRow, ((scrollY + height) / rowHeight).toInt() + 1)
 
-        var y = 60f
+        val bytesPerElement = representation.bitDepth.bytesPerElement
+        val elementsPerRow = bytesPerRow / bytesPerElement
 
-        // Nagłówek kolumn
-        for (col in 0 until cols) {
-            val colHeader = String.format(Locale.US, "+%X", col * step)
-            canvas.drawText(colHeader, offsetColWidth + (col * colWidth), y, headerPaint)
-        }
-        y += rowHeight
+        for (r in startRow until endRow) {
+            val rowY = (r + 1) * rowHeight
+            val baseAddress = r * bytesPerRow
 
-        val visibleRows = ((height - y) / rowHeight).toInt()
-        val totalBytesPerRow = cols * step
+            val addrStr = String.format("%08X:", baseAddress)
+            canvas.drawText(addrStr, 10f, rowY, headerPaint)
 
-        var currentAddress = startOffset
+            for (c in 0 until elementsPerRow) {
+                val elementAddress = baseAddress + (c * bytesPerElement)
+                if (elementAddress >= totalBytes) break
 
-        for (row in 0 until visibleRows) {
-            if (currentAddress >= buf.capacity()) break
+                val isMod = manager.isModified(elementAddress, bytesPerElement)
+                val paint = if (isMod) modifiedPaint else textPaint
 
-            // Rysowanie adresu wiersza
-            val addressText = String.format(Locale.US, "%08X:", currentAddress)
-            canvas.drawText(addressText, 16f, y, offsetPaint)
-
-            // Rysowanie poszczególnych komórek w wierszu
-            for (col in 0 until cols) {
-                val cellAddress = currentAddress + (col * step)
-                if (cellAddress + step <= buf.capacity()) {
-                    val formatted = DataFormatterEngine.formatValue(buf, cellAddress, config)
-                    canvas.drawText(formatted, offsetColWidth + (col * colWidth), y, textPaint)
+                val raw = manager.readRawValue(elementAddress, representation)
+                val str = when (representation.bitDepth) {
+                    BitDepth.BITS_8 -> String.format("%02X", raw and 0xFF)
+                    BitDepth.BITS_16 -> String.format("%04X", raw and 0xFFFF)
+                    BitDepth.BITS_32 -> String.format("%08X", raw and 0xFFFFFFFFL)
                 }
-            }
 
-            currentAddress += totalBytesPerRow
-            y += rowHeight
+                val posX = addressOffset + (c * (colWidth * bytesPerElement))
+                canvas.drawText(str, posX, rowY, paint)
+            }
         }
     }
 }

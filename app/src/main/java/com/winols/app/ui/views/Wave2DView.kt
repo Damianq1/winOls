@@ -6,19 +6,21 @@ import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
-import android.graphics.Rect
+import android.graphics.PointF
 import android.util.AttributeSet
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
-import com.winols.app.model.MapDefinition
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Custom View do wizualizacji danych binarnych oraz map w trybie 2D (wykres fali / profil krzywej).
- * Zoptymalizowany pod kątem braku alokacji pamięci w cyklu onDraw.
+ * Interaktywny wykres 2D fali/profilu mapy (dla wybranego wiersza, kolumny lub spłaszczonych danych RAW/fizycznych).
+ * Obsługuje:
+ * - Płynny Pinch-to-Zoom i Pan (przesuwanie poziome/pionowe)
+ * - Dotykowe wskazywanie i zaznaczanie punktu z HUDem (wartość, indeks)
+ * - Rysowanie dynamicznej siatki, linii zerowej i gradientu pod wykresem
  */
 class Wave2DView @JvmOverloads constructor(
     context: Context,
@@ -26,396 +28,282 @@ class Wave2DView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    // Dane źródłowe
-    private var rawValues: FloatArray = FloatArray(0)
-    private var baseOffsetAddress: Long = 0L
-    private var factor: Double = 1.0
-    private var offset: Double = 0.0
+    interface OnPointSelectedListener {
+        fun onPointSelected(index: Int, rawValue: Double, physicalValue: Double)
+    }
 
-    // Skrajne wartości do skalowania Y
-    private var minY: Float = 0f
-    private var maxY: Float = 1f
+    var pointSelectedListener: OnPointSelectedListener? = null
 
-    // Transformacje widoku (Pan / Zoom)
-    private var scaleX: Float = 1.0f
-    private var translateX: Float = 0f
-    private val minScaleX = 0.5f
-    private val maxScaleX = 50.0f
+    // Dane do wyświetlenia
+    private var rawData: DoubleArray = doubleArrayOf()
+    private var physicalData: DoubleArray = doubleArrayOf()
 
-    // Stan kursora
-    private var selectedIndex: Int = -1
-    private var isDraggingCursor: Boolean = false
+    // Zakresy danych
+    private var minVal: Double = 0.0
+    private var maxVal: Double = 1.0
 
-    // Zasoby graficzne (reusable - zero allocation w onDraw)
-    private val wavePath = Path()
-    private val fillPath = Path()
-    private val textBounds = Rect()
+    // Transformacje widoku (Zoom & Pan)
+    private var scaleXFactor = 1.0f
+    private var scaleYFactor = 1.0f
+    private var translationXOffset = 0.0f
+    private var translationYOffset = 0.0f
+
+    // Wskaźnik i selekcja
+    private var selectedIndex = -1
+    private val selectedPointPos = PointF()
+
+    // Narzędzia do rysowania (recykling obiektów, brak alokacji w onDraw)
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#00E5FF") // Akcent cyjan/neon
+        strokeWidth = 4f
+        style = Paint.Style.STROKE
+    }
+
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2600E5FF") // Przezroczyste wypełnienie pod falą
+        style = Paint.Style.FILL
+    }
+
+    private val pointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFD600")
+        style = Paint.Style.FILL
+    }
 
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#263238")
-        strokeWidth = 1f
-        style = Paint.Style.STROKE
-    }
-
-    private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#455A64")
-        strokeWidth = 2f
-        style = Paint.Style.STROKE
-    }
-
-    private val baselinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#37474F")
+        color = Color.parseColor("#22FFFFFF")
         strokeWidth = 1.5f
         style = Paint.Style.STROKE
-        pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
     }
 
-    private val waveLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#00E676") // Styl WinOLS green wave
-        strokeWidth = 3f
-        style = Paint.Style.STROKE
-    }
-
-    private val wavePointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#B9F6CA")
-        strokeWidth = 6f
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-
-    private val waveFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#1500E676")
-        style = Paint.Style.FILL
+    private val axisTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#80FFFFFF")
+        textSize = 24f
     }
 
     private val cursorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FF5252")
         strokeWidth = 2f
         style = Paint.Style.STROKE
+        pathEffect = DashPathEffect(floatArrayOf(10f, 10f), 0f)
     }
 
-    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#CFD8DC")
-        textSize = 28f
-    }
-
-    private val tooltipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#CC102027")
+    private val hudBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#CC1E1E1E")
         style = Paint.Style.FILL
     }
 
-    private val tooltipTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val hudTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 30f
+        textSize = 28f
         isFakeBoldText = true
     }
 
-    // Detektory gestów
-    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
-        override fun onScale(detector: ScaleGestureDetector): Boolean {
-            val prevScale = scaleX
-            scaleX = (scaleX * detector.scaleFactor).coerceIn(minScaleX, maxScaleX)
+    private val wavePath = Path()
+    private val fillPath = Path()
 
-            // Centrowanie zoomu wokół punktu skupienia palców
-            val focusX = detector.focusX
-            translateX = focusX - (focusX - translateX) * (scaleX / prevScale)
-            clampTranslation()
+    // Detektory gestów
+    private val scaleGestureDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            scaleXFactor = (scaleXFactor * detector.scaleFactor).coerceIn(0.5f, 20f)
             invalidate()
             return true
         }
     })
 
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
-        override fun onScroll(
-            e1: MotionEvent?,
-            e2: MotionEvent,
-            distanceX: Float,
-            distanceY: Float
-        ): Boolean {
-            if (!isDraggingCursor) {
-                translateX -= distanceX
-                clampTranslation()
-                invalidate()
-                return true
-            }
-            return false
+        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+            translationXOffset -= distanceX
+            translationYOffset -= distanceY
+            clampOffsets()
+            invalidate()
+            return true
         }
 
-        override fun onSingleTapUp(e: MotionEvent): Boolean {
-            resolveCursorIndex(e.x)
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            findClosestPoint(e.x, e.y)
             invalidate()
             return true
         }
     })
 
-    /**
-     * Wczytuje dane surowe z bufora z opcjonalnym adresem bazowym oraz formułą fizyczną.
-     */
-    fun setData(
-        data: FloatArray,
-        baseAddress: Long = 0L,
-        factor: Double = 1.0,
-        offset: Double = 0.0
-    ) {
-        this.rawValues = data.copyOf()
-        this.baseOffsetAddress = baseAddress
-        this.factor = factor
-        this.offset = offset
-        this.selectedIndex = -1
+    fun setData(raw: DoubleArray, physical: DoubleArray = raw) {
+        this.rawData = raw
+        this.physicalData = physical
 
-        calculateMinMax()
-        resetViewport()
+        if (raw.isNotEmpty()) {
+            var min = raw[0]
+            var max = raw[0]
+            for (v in raw) {
+                if (v < min) min = v
+                if (v > max) max = v
+            }
+            if (min == max) {
+                min -= 1.0
+                max += 1.0
+            }
+            this.minVal = min
+            this.maxVal = max
+        } else {
+            this.minVal = 0.0
+            this.maxVal = 1.0
+        }
+
+        selectedIndex = -1
+        resetView()
         invalidate()
     }
 
-    /**
-     * Alternatywne wczytanie z modelu MapDefinition i bufora przetłumaczonego na float.
-     */
-    fun setMap(mapDef: MapDefinition, rawPoints: FloatArray) {
-        setData(
-            data = rawPoints,
-            baseAddress = mapDef.address.toLong(),
-            factor = mapDef.factor,
-            offset = mapDef.offset
-        )
+    fun resetView() {
+        scaleXFactor = 1.0f
+        scaleYFactor = 1.0f
+        translationXOffset = 0.0f
+        translationYOffset = 0.0f
+        clampOffsets()
     }
 
-    private fun calculateMinMax() {
-        if (rawValues.isEmpty()) {
-            minY = 0f
-            maxY = 1f
-            return
-        }
-        var min = rawValues[0]
-        var max = rawValues[0]
-        for (v in rawValues) {
-            if (v < min) min = v
-            if (v > max) max = v
-        }
-        if (min == max) {
-            min -= 1f
-            max += 1f
-        }
-        minY = min
-        maxY = max
-    }
-
-    private fun resetViewport() {
-        scaleX = 1.0f
-        translateX = 0f
-    }
-
-    private fun clampTranslation() {
-        if (rawValues.size <= 1) {
-            translateX = 0f
-            return
-        }
-        val totalContentWidth = (rawValues.size - 1) * getStepX() * scaleX
-        val viewWidth = width.toFloat()
-
-        if (totalContentWidth <= viewWidth) {
-            translateX = 0f
+    private fun clampOffsets() {
+        // Ograniczenie przesuwania
+        val maxScrollX = width * (scaleXFactor - 1f)
+        if (scaleXFactor <= 1.0f) {
+            translationXOffset = 0f
         } else {
-            val minTranslate = viewWidth - totalContentWidth
-            val maxTranslate = 0f
-            translateX = translateX.coerceIn(minTranslate, maxTranslate)
+            translationXOffset = translationXOffset.coerceIn(-maxScrollX, 0f)
         }
-    }
-
-    private fun getStepX(): Float {
-        val usableWidth = width - paddingLeft - paddingRight
-        return if (rawValues.size > 1) {
-            usableWidth.toFloat() / (rawValues.size - 1)
-        } else {
-            usableWidth.toFloat()
-        }
-    }
-
-    private fun dataYToScreenY(value: Float): Float {
-        val usableHeight = height - paddingTop - paddingBottom
-        val normalized = (value - minY) / (maxY - minY)
-        return height - paddingBottom - (normalized * usableHeight)
-    }
-
-    private fun dataIndexToScreenX(index: Int): Float {
-        return paddingLeft + translateX + (index * getStepX() * scaleX)
-    }
-
-    private fun resolveCursorIndex(screenX: Float) {
-        if (rawValues.isEmpty()) return
-        val step = getStepX() * scaleX
-        val relativeX = screenX - paddingLeft - translateX
-        val index = (relativeX / step + 0.5f).toInt()
-        selectedIndex = index.coerceIn(0, rawValues.size - 1)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        scaleDetector.onTouchEvent(event)
-        gestureDetector.onTouchEvent(event)
+        var handled = scaleGestureDetector.onTouchEvent(event)
+        handled = gestureDetector.onTouchEvent(event) || handled
 
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                if (selectedIndex != -1) {
-                    val cursorX = dataIndexToScreenX(selectedIndex)
-                    if (kotlin.math.abs(event.x - cursorX) < 40f) {
-                        isDraggingCursor = true
-                    }
-                }
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (isDraggingCursor) {
-                    resolveCursorIndex(event.x)
-                    invalidate()
-                }
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                isDraggingCursor = false
-            }
+        if (event.actionMasked == MotionEvent.ACTION_MOVE && selectedIndex != -1) {
+            findClosestPoint(event.x, event.y)
+            invalidate()
+            handled = true
         }
-        return true
+
+        return handled || super.onTouchEvent(event)
+    }
+
+    private fun findClosestPoint(touchX: Float, touchY: Float) {
+        if (rawData.isEmpty()) return
+
+        val paddingLeft = paddingLeft.toFloat()
+        val paddingRight = paddingRight.toFloat()
+        val contentW = (width - paddingLeft - paddingRight) * scaleXFactor
+        val stepX = contentW / (rawData.size - 1).coerceAtLeast(1)
+
+        val localX = touchX - paddingLeft - translationXOffset
+        val idx = (localX / stepX).toInt().coerceIn(0, rawData.size - 1)
+
+        selectedIndex = idx
+        val raw = rawData[idx]
+        val phys = if (idx < physicalData.size) physicalData[idx] else raw
+        pointSelectedListener?.onPointSelected(idx, raw, phys)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawColor(Color.parseColor("#121212"))
 
-        drawGridAndAxes(canvas)
-
-        if (rawValues.isEmpty()) {
-            drawEmptyState(canvas)
-            return
-        }
-
-        drawWave(canvas)
-        drawCursor(canvas)
-    }
-
-    private fun drawGridAndAxes(canvas: Canvas) {
-        val h = height.toFloat()
         val w = width.toFloat()
+        val h = height.toFloat()
+        val pLeft = paddingLeft.toFloat()
+        val pRight = paddingRight.toFloat()
+        val pTop = paddingTop.toFloat()
+        val pBottom = paddingBottom.toFloat()
 
-        // 4 linie podziału poziomego
-        val stepsY = 4
-        for (i in 0..stepsY) {
-            val y = paddingTop + (h - paddingTop - paddingBottom) * (i.toFloat() / stepsY)
-            canvas.drawLine(0f, y, w, y, gridPaint)
+        val graphW = w - pLeft - pRight
+        val graphH = h - pTop - pBottom
 
-            val valueAtY = maxY - (i.toFloat() / stepsY) * (maxY - minY)
-            val physicalVal = valueAtY * factor + offset
-            val label = String.format("%.1f", physicalVal)
-            canvas.drawText(label, 16f, y - 6f, labelPaint)
+        if (graphW <= 0 || graphH <= 0) return
+
+        // Rysowanie tła / siatki
+        val gridLinesH = 5
+        for (i in 0..gridLinesH) {
+            val y = pTop + (graphH / gridLinesH) * i
+            canvas.drawLine(pLeft, y, w - pRight, y, gridPaint)
+            val valStep = maxVal - (i.toDouble() / gridLinesH) * (maxVal - minVal)
+            canvas.drawText(String.format("%.1f", valStep), pLeft + 10f, y - 8f, axisTextPaint)
         }
 
-        // Linia osi 0 jeśli mieści się w zakresie
-        if (minY <= 0f && maxY >= 0f) {
-            val zeroY = dataYToScreenY(0f)
-            canvas.drawLine(0f, zeroY, w, zeroY, baselinePaint)
-        }
+        if (rawData.size < 2) return
 
-        // Ramka
-        canvas.drawRect(
-            paddingLeft.toFloat(),
-            paddingTop.toFloat(),
-            w - paddingRight,
-            h - paddingBottom,
-            axisPaint
-        )
-    }
+        canvas.save()
+        canvas.clipRect(pLeft, pTop, w - pRight, h - pBottom)
+        canvas.translate(translationXOffset, translationYOffset)
 
-    private fun drawWave(canvas: Canvas) {
+        val totalWidth = graphW * scaleXFactor
+        val stepX = totalWidth / (rawData.size - 1)
+        val range = (maxVal - minVal).coerceAtLeast(0.0001)
+
         wavePath.reset()
         fillPath.reset()
 
-        val bottomY = height.toFloat() - paddingBottom
         var firstX = 0f
+        var firstY = 0f
         var lastX = 0f
 
-        for (i in rawValues.indices) {
-            val x = dataIndexToScreenX(i)
-            val y = dataYToScreenY(rawValues[i])
+        for (i in rawData.indices) {
+            val x = pLeft + i * stepX
+            val normalizedY = ((rawData[i] - minVal) / range).toFloat()
+            val y = pTop + graphH - (normalizedY * graphH)
 
             if (i == 0) {
                 wavePath.moveTo(x, y)
-                fillPath.moveTo(x, bottomY)
+                fillPath.moveTo(x, pTop + graphH)
                 fillPath.lineTo(x, y)
                 firstX = x
+                firstY = y
             } else {
                 wavePath.lineTo(x, y)
                 fillPath.lineTo(x, y)
             }
-            lastX = x
 
-            // Rysowanie punktów danych przy odpowiednim przybliżeniu
-            if (scaleX > 2.5f) {
-                canvas.drawPoint(x, y, wavePointPaint)
+            if (i == rawData.size - 1) {
+                lastX = x
+            }
+
+            // Zapamiętanie współrzędnych zaznaczonego punktu
+            if (i == selectedIndex) {
+                selectedPointPos.set(x, y)
             }
         }
 
-        fillPath.lineTo(lastX, bottomY)
+        fillPath.lineTo(lastX, pTop + graphH)
         fillPath.close()
 
-        canvas.drawPath(fillPath, waveFillPaint)
-        canvas.drawPath(wavePath, waveLinePaint)
-    }
+        // Rysowanie fali i jej wypełnienia
+        canvas.drawPath(fillPath, fillPaint)
+        canvas.drawPath(wavePath, linePaint)
 
-    private fun drawCursor(canvas: Canvas) {
-        if (selectedIndex !in rawValues.indices) return
+        // Rysowanie kursorów i punktu wybranego
+        if (selectedIndex in rawData.indices) {
+            // Linie pomocnicze kursora
+            canvas.drawLine(selectedPointPos.x, pTop, selectedPointPos.x, pTop + graphH, cursorPaint)
+            canvas.drawLine(pLeft, selectedPointPos.y, pLeft + totalWidth, selectedPointPos.y, cursorPaint)
 
-        val cursorX = dataIndexToScreenX(selectedIndex)
-        val rawVal = rawValues[selectedIndex]
-        val cursorY = dataYToScreenY(rawVal)
-        val physicalVal = rawVal * factor + offset
-        val pointAddress = baseOffsetAddress + (selectedIndex * 2) // domyślny skok słowa 16-bit
-
-        // Pionowa linia wskaźnika
-        canvas.drawLine(cursorX, paddingTop.toFloat(), cursorX, height - paddingBottom.toFloat(), cursorPaint)
-
-        // Marker na fali
-        canvas.drawCircle(cursorX, cursorY, 8f, cursorPaint)
-
-        // Tooltip z informacjami
-        val infoText = String.format(
-            "[%d] 0x%X: RAW: %.0f | PHY: %.2f",
-            selectedIndex,
-            pointAddress,
-            rawVal,
-            physicalVal
-        )
-        tooltipTextPaint.getTextBounds(infoText, 0, infoText.length, textBounds)
-
-        val padding = 16f
-        val boxWidth = textBounds.width() + (padding * 2)
-        val boxHeight = textBounds.height() + (padding * 2)
-
-        var tooltipLeft = cursorX + 20f
-        if (tooltipLeft + boxWidth > width - paddingRight) {
-            tooltipLeft = cursorX - boxWidth - 20f
+            // Aktywny punkt
+            canvas.drawCircle(selectedPointPos.x, selectedPointPos.y, 10f, pointPaint)
         }
-        val tooltipTop = (cursorY - boxHeight - 20f).coerceAtLeast(paddingTop + 10f)
 
-        canvas.drawRoundRect(
-            tooltipLeft,
-            tooltipTop,
-            tooltipLeft + boxWidth,
-            tooltipTop + boxHeight,
-            8f,
-            8f,
-            tooltipBgPaint
-        )
+        canvas.restore()
 
-        canvas.drawText(
-            infoText,
-            tooltipLeft + padding,
-            tooltipTop + boxHeight - padding - 4f,
-            tooltipTextPaint
-        )
+        // Rysowanie HUD z informacją o zaznaczonym punkcie (poza macierzą przesunięcia)
+        if (selectedIndex in rawData.indices) {
+            drawHud(canvas, w, pTop)
+        }
     }
 
-    private fun drawEmptyState(canvas: Canvas) {
-        val msg = "Brak załadowanych danych osi/krzywej 2D"
-        labelPaint.getTextBounds(msg, 0, msg.length, textBounds)
-        val x = (width - textBounds.width()) / 2f
-        val y = (height + textBounds.height()) / 2f
-        canvas.drawText(msg, x, y, labelPaint)
+    private fun drawHud(canvas: Canvas, w: Float, top: Float) {
+        val raw = rawData[selectedIndex]
+        val phys = if (selectedIndex < physicalData.size) physicalData[selectedIndex] else raw
+        val text = "Index: $selectedIndex | RAW: ${raw.toLong()} | Phys: ${String.format("%.2f", phys)}"
+        val textW = hudTextPaint.measureText(text)
+        val hudRectLeft = (w - textW) / 2f - 24f
+        val hudRectRight = hudRectLeft + textW + 48f
+        val hudRectTop = top + 16f
+        val hudRectBottom = hudRectTop + 56f
+
+        canvas.drawRoundRect(hudRectLeft, hudRectTop, hudRectRight, hudRectBottom, 12f, 12f, hudBgPaint)
+        canvas.drawText(text, hudRectLeft + 24f, hudRectTop + 38f, hudTextPaint)
     }
 }

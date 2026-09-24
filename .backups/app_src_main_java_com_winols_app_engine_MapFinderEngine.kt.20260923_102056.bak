@@ -1,0 +1,62 @@
+package com.winols.app.engine
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import java.nio.ByteOrder
+import kotlin.math.abs
+
+/** Heuristic detector: finds regular 2D matrices with plausible neighbouring values and returns confidence. */
+class MapFinderEngine {
+    fun scanPotentialMaps(manager: BinaryBufferManager, maxResults: Int = 100): List<MapDefinition> {
+        val data = manager.snapshot()
+        if (data.size < 64) return emptyList()
+        val candidates = ArrayList<MapDefinition>()
+        val types = listOf(DataType.UBYTE, DataType.UWORD_LE, DataType.UWORD_BE, DataType.SWORD_LE, DataType.SWORD_BE)
+        val dimensions = listOf(4 to 4, 8 to 8, 8 to 16, 16 to 8, 16 to 16, 16 to 32, 32 to 16)
+        for (type in types) for ((rows, cols) in dimensions) {
+            val bytes = rows * cols * type.byteSize
+            if (bytes > data.size) continue
+            val step = maxOf(type.byteSize, minOf(256, bytes / 2))
+            var address = 0
+            while (address + bytes <= data.size && candidates.size < maxResults * 8) {
+                val score = score(data, address, rows, cols, type)
+                if (score >= 0.68) candidates += MapDefinition(
+                    id = "map_${address.toString(16)}_${rows}x${cols}_${type.name}",
+                    name = "Potencjalna mapa @ 0x${address.toString(16).uppercase()}",
+                    address = address.toLong(), rows = rows, columns = cols, dataType = type, confidence = score
+                )
+                address += step
+            }
+        }
+        return candidates.sortedByDescending { it.confidence }.distinctBy { Triple(it.address, it.rows, it.columns) }.take(maxResults)
+    }
+
+    private fun score(data: ByteArray, offset: Int, rows: Int, cols: Int, type: DataType): Double {
+        val values = DoubleArray(rows * cols)
+        val bb = java.nio.ByteBuffer.wrap(data).order(if (type.name.endsWith("LE")) ByteOrder.LITTLE_ENDIAN else ByteOrder.BIG_ENDIAN)
+        for (i in values.indices) values[i] = read(bb, offset + i * type.byteSize, type).toDouble()
+        val mean = values.average()
+        val variance = values.map { (it - mean) * (it - mean) }.average()
+        if (!variance.isFinite()) return 0.0
+        var horizontal = 0.0; var vertical = 0.0
+        for (r in 0 until rows) for (c in 0 until cols) {
+            val i = r * cols + c
+            if (c + 1 < cols) horizontal += abs(values[i + 1] - values[i])
+            if (r + 1 < rows) vertical += abs(values[i + cols] - values[i])
+        }
+        val local = (horizontal + vertical) / maxOf(1, rows * cols - 1)
+        val dynamic = if (mean == 0.0) 0.0 else (kotlin.math.sqrt(variance) / abs(mean)).coerceIn(0.0, 1.0)
+        val regularity = (1.0 - (local / (kotlin.math.sqrt(variance) + 1.0))).coerceIn(0.0, 1.0)
+        return (0.45 * dynamic + 0.55 * regularity).coerceIn(0.0, 1.0)
+    }
+
+    private fun read(bb: java.nio.ByteBuffer, off: Int, type: DataType): Long = when (type) {
+        DataType.UBYTE -> bb.get(off).toLong() and 0xFF
+        DataType.SBYTE -> bb.get(off).toLong()
+        DataType.UWORD_BE, DataType.UWORD_LE -> bb.getShort(off).toLong() and 0xFFFF
+        DataType.SWORD_BE, DataType.SWORD_LE -> bb.getShort(off).toLong()
+        DataType.UDWORD_BE, DataType.UDWORD_LE -> bb.getInt(off).toLong() and 0xFFFFFFFFL
+        DataType.SDWORD_BE, DataType.SDWORD_LE -> bb.getInt(off).toLong()
+    }
+}

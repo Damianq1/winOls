@@ -1,0 +1,50 @@
+package com.winols.app.engine
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.AxisDefinition
+import com.winols.app.model.DataType
+import com.winols.app.model.Endianness
+import com.winols.app.model.MapDefinition
+
+class MapFinderEngine(private val bufferManager: BinaryBufferManager) {
+
+    /**
+     * Wyszukuje charakterystyczne nagłówki osi i map (np. Bosch EDC15/EDC16 format: [Rows, Cols] lub [Length]).
+     */
+    fun scanForMaps(): List<MapDefinition> {
+        val detectedMaps = mutableListOf<MapDefinition>()
+        val totalSize = bufferManager.size
+        if (totalSize < 64) return detectedMaps
+
+        var offset = 0
+        while (offset < totalSize - 32) {
+            val potentialRows = bufferManager.readValue(offset, DataType.UBYTE, Endianness.BIG_ENDIAN).toInt()
+            val potentialCols = bufferManager.readValue(offset + 1, DataType.UBYTE, Endianness.BIG_ENDIAN).toInt()
+
+            // Standardowe filtry heurystyczne dla macierzy map samochodowych
+            if (potentialRows in 2..32 && potentialCols in 2..32) {
+                val dataAddress = offset + 2
+                val mapBytes = potentialRows * potentialCols * DataType.UWORD.byteSize
+                if (dataAddress + mapBytes <= totalSize) {
+                    val candidate = MapDefinition(
+                        id = "MAP_${Integer.toHexString(dataAddress).uppercase()}",
+                        name = "Potential Map ${potentialRows}x${potentialCols}",
+                        address = dataAddress,
+                        rows = potentialRows,
+                        columns = potentialCols,
+                        dataType = DataType.UWORD,
+                        endianness = Endianness.BIG_ENDIAN,
+                        factor = 1.0,
+                        offset = 0.0
+                    )
+                    detectedMaps.add(candidate)
+                    offset += mapBytes + 2
+                    continue
+                }
+            }
+            offset += 2
+        }
+
+        return detectedMaps
+    }
+}

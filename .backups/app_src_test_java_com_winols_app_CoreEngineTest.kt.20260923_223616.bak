@@ -1,0 +1,70 @@
+package com.winols.app
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.engine.ChecksumEngine
+import com.winols.app.engine.ChecksumResult
+import com.winols.app.model.DataType
+import com.winols.app.model.MapDefinition
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+
+class CoreEngineTest {
+
+    private lateinit var bufferManager: BinaryBufferManager
+    private lateinit var binModel: BinModel
+
+    @Before
+    fun setup() {
+        bufferManager = BinaryBufferManager()
+        val dummyData = ByteArray(1024) { 0 }
+        bufferManager.loadBytes(dummyData)
+        binModel = BinModel(bufferManager)
+    }
+
+    @Test
+    fun testReadWriteMapValues() {
+        val mapDef = MapDefinition(
+            id = "TEST_MAP",
+            name = "Test Map",
+            address = 0x10,
+            rows = 2,
+            columns = 2,
+            dataType = DataType.UINT16_LE,
+            factor = 0.5,
+            offsetVal = 10.0
+        )
+
+        val input = arrayOf(
+            doubleArrayOf(12.0, 15.0),
+            doubleArrayOf(20.0, 25.5)
+        )
+
+        binModel.writeMapValues(mapDef, input)
+        val output = binModel.readMapValues(mapDef)
+
+        assertEquals(input[0][0], output[0][0], 0.01)
+        assertEquals(input[0][1], output[0][1], 0.01)
+        assertEquals(input[1][0], output[1][0], 0.01)
+        assertEquals(input[1][1], output[1][1], 0.01)
+    }
+
+    @Test
+    fun testChecksumVerificationAndCorrection() {
+        val engine = ChecksumEngine(bufferManager)
+        
+        // Zapis słów testowych
+        bufferManager.writeRawValue(0x00, DataType.UINT16_LE, 0x1111)
+        bufferManager.writeRawValue(0x02, DataType.UINT16_LE, 0x2222)
+        bufferManager.writeRawValue(0x04, DataType.UINT16_LE, 0x0000) // Miejsce na sumę
+
+        val correct = engine.correctSum16(0x00, 0x06, 0x04, isLittleEndian = true)
+        assertTrue(correct)
+
+        val result = engine.verifySum16(0x00, 0x06, 0x04, isLittleEndian = true)
+        assertTrue(result is ChecksumResult.Valid)
+        assertEquals(0x3333L, (result as ChecksumResult.Valid).current)
+    }
+}

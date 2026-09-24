@@ -1,0 +1,35 @@
+package com.winols.app.model
+
+enum class DataType(val byteSize: Int, val signed: Boolean) {
+    UBYTE(1, false), SBYTE(1, true),
+    UWORD_BE(2, false), UWORD_LE(2, false), SWORD_BE(2, true), SWORD_LE(2, true),
+    UDWORD_BE(4, false), UDWORD_LE(4, false), SDWORD_BE(4, true), SDWORD_LE(4, true)
+}
+
+data class MapDefinition(
+    var id: String = "",
+    var name: String = "",
+    var address: Long = 0L,
+    var rows: Int = 1,
+    var columns: Int = 1,
+    var dataType: DataType = DataType.UWORD_LE,
+    var factor: Double = 1.0,
+    var offset: Double = 0.0,
+    var unit: String = "",
+    var confidence: Double = 0.0,
+    var axisXAddress: Long? = null,
+    var axisYAddress: Long? = null
+) {
+    var startAddress: Long
+        get() = address
+        set(value) { address = value }
+    var cols: Int
+        get() = columns
+        set(value) { columns = value }
+    var dataFormat: String
+        get() = dataType.name
+        set(value) { dataType = runCatching { DataType.valueOf(value) }.getOrDefault(DataType.UWORD_LE) }
+    var endianness: String
+        get() = if (dataType.name.endsWith("BE")) "BigEndian" else "LittleEndian"
+        set(value) { /* kept for Java compatibility; dataType is the source of truth */ }
+}

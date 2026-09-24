@@ -1,0 +1,64 @@
+package com.winols.app.data
+
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/** Thread-safe working/original binary store backed by a direct ByteBuffer. */
+class BinaryBufferManager {
+    private var original: ByteArray = ByteArray(0)
+    private var buffer: ByteBuffer? = null
+    private var sourceName: String = ""
+
+    val isLoaded: Boolean get() = buffer != null
+    val size: Int get() = buffer?.capacity() ?: 0
+    val name: String get() = sourceName
+
+    @Synchronized fun load(bytes: ByteArray, name: String = "") {
+        require(bytes.size <= MAX_FILE_SIZE) { "Plik jest większy niż 8 MiB" }
+        original = bytes.clone()
+        buffer = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.BIG_ENDIAN).apply { put(bytes); rewind() }
+        sourceName = name
+    }
+
+    @Synchronized fun loadFromStream(input: InputStream, name: String = ""): Result<Unit> = runCatching {
+        val bytes = input.use { it.readBytes() }
+        load(bytes, name)
+    }
+
+    @Synchronized fun loadFile(file: File): Result<Unit> = runCatching {
+        require(file.isFile) { "Nie znaleziono pliku: ${file.path}" }
+        require(file.length() <= MAX_FILE_SIZE) { "Plik jest większy niż 8 MiB" }
+        FileChannel.open(file.toPath(), StandardOpenOption.READ).use { channel ->
+            val direct = ByteBuffer.allocateDirect(file.length().toInt()).order(ByteOrder.BIG_ENDIAN)
+            while (direct.hasRemaining()) channel.read(direct)
+            direct.flip()
+            val bytes = ByteArray(direct.remaining())
+            direct.get(bytes)
+            original = bytes.clone()
+            buffer = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.BIG_ENDIAN).apply { put(bytes); rewind() }
+            sourceName = file.name
+        }
+    }
+
+    @Synchronized fun snapshot(): ByteArray = buffer?.duplicate()?.apply { rewind() }?.let { b -> ByteArray(b.remaining()).also { b.get(it) } } ?: ByteArray(0)
+    @Synchronized fun originalSnapshot(): ByteArray = original.clone()
+
+    @Synchronized fun readUnsignedByte(address: Int): Int = (buffer?.get(address)?.toInt() ?: error("Brak pliku")) and 0xFF
+    @Synchronized fun writeByte(address: Int, value: Int) { buffer?.put(address, value.toByte()) ?: error("Brak pliku") }
+
+    @Synchronized fun duplicate(order: ByteOrder = ByteOrder.BIG_ENDIAN): ByteBuffer =
+        (buffer?.duplicate()?.order(order) ?: error("Brak pliku")).apply { rewind() }
+
+    @Synchronized fun saveToStream(output: OutputStream): Result<Unit> = runCatching { output.use { it.write(snapshot()) } }
+    @Synchronized fun saveToFile(file: File): Result<Unit> = runCatching { file.outputStream().use { it.write(snapshot()) } }
+
+    @Synchronized fun restoreOriginal() { load(original, sourceName) }
+    @Synchronized fun changedByteCount(): Int = snapshot().zip(original.asIterable()).count { it.first != it.second } + (snapshot().size - original.size).coerceAtLeast(0)
+
+    companion object { const val MAX_FILE_SIZE = 8 * 1024 * 1024 }
+}

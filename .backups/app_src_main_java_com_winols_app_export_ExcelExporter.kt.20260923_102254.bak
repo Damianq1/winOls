@@ -1,0 +1,31 @@
+package com.winols.app.export
+
+import com.winols.app.edit.MapEditor
+import com.winols.app.model.MapDefinition
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileWriter
+
+class ExcelExporter {
+
+    suspend fun exportMapToCsv(mapDef: MapDefinition, editor: MapEditor, destination: File): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                val data = editor.readMatrix()
+                FileWriter(destination).use { writer ->
+                    writer.append("# MAP: ${mapDef.name} [${mapDef.columns}x${mapDef.rows}]\n")
+                    writer.append("# UNIT: ${mapDef.unit}\n")
+
+                    for (r in 0 until mapDef.rows) {
+                        val rowStr = data[r].joinToString(separator = ";") { String.format("%.2f", it) }
+                        writer.append(rowStr).append("\n")
+                    }
+                }
+                true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
+}

@@ -1,0 +1,74 @@
+package com.winols.app.engine
+
+import com.winols.app.data.BinaryBufferManager
+
+enum class Algorithm { ADD_8, ADD_16_LE, ADD_16_BE, CRC16, CRC32 }
+enum class ChecksumByteOrder { LITTLE_ENDIAN, BIG_ENDIAN }
+
+data class ChecksumBlock(
+    val startAddress: Int,
+    val endAddress: Int,
+    val checksumAddress: Int,
+    val algorithm: Algorithm,
+    val checksumByteOrder: ChecksumByteOrder = ChecksumByteOrder.LITTLE_ENDIAN,
+    val crc16Polynomial: Int = 0x1021,
+    val crc16Initial: Int = 0xFFFF,
+    val crc32Polynomial: Long = 0xEDB88320L,
+    val crc32Initial: Long = 0xFFFFFFFFL
+)
+
+object ChecksumEngine {
+    fun calculate(data: ByteArray, block: ChecksumBlock): Long {
+        require(block.startAddress >= 0 && block.endAddress < data.size && block.startAddress <= block.endAddress)
+        val values = ByteArray(block.endAddress - block.startAddress + 1)
+        data.copyInto(values, 0, block.startAddress, block.endAddress + 1)
+        val checksumStart = block.checksumAddress - block.startAddress
+        if (checksumStart in values.indices) values[checksumStart] = 0
+        if (checksumStart + 1 in values.indices && block.algorithm != Algorithm.ADD_8) values[checksumStart + 1] = 0
+        return when (block.algorithm) {
+            Algorithm.ADD_8 -> values.fold(0L) { s, b -> (s + (b.toInt() and 0xFF)) and 0xFF }
+            Algorithm.ADD_16_LE -> add16(values, true)
+            Algorithm.ADD_16_BE -> add16(values, false)
+            Algorithm.CRC16 -> crc16(values, block.crc16Polynomial, block.crc16Initial).toLong()
+            Algorithm.CRC32 -> crc32(values, block.crc32Polynomial, block.crc32Initial)
+        }
+    }
+
+    fun verify(data: ByteArray, block: ChecksumBlock): Boolean {
+        val value = calculate(data, block)
+        return when (block.algorithm) {
+            Algorithm.ADD_8 -> (data[block.checksumAddress].toInt() and 0xFF).toLong() == value
+            else -> {
+                val stored = if (block.checksumByteOrder == ChecksumByteOrder.LITTLE_ENDIAN)
+                    ((data[block.checksumAddress].toInt() and 0xFF) or ((data[block.checksumAddress + 1].toInt() and 0xFF) shl 8)).toLong()
+                else ((data[block.checksumAddress].toInt() and 0xFF) shl 8 or (data[block.checksumAddress + 1].toInt() and 0xFF)).toLong()
+                stored == value
+            }
+        }
+    }
+
+    fun correct(data: ByteArray, block: ChecksumBlock): Long {
+        val value = calculate(data, block)
+        data[block.checksumAddress] = value.toByte()
+        if (block.algorithm != Algorithm.ADD_8) {
+            data[block.checksumAddress + 1] = if (block.checksumByteOrder == ChecksumByteOrder.LITTLE_ENDIAN) (value ushr 8).toByte() else value.toByte()
+            if (block.checksumByteOrder == ChecksumByteOrder.BIG_ENDIAN) data[block.checksumAddress] = (value ushr 8).toByte()
+        }
+        return value
+    }
+
+    fun verifyAndCorrectBlock(data: ByteArray, block: ChecksumBlock): Boolean = runCatching { correct(data, block); true }.getOrDefault(false)
+    fun verify(buffer: BinaryBufferManager, block: ChecksumBlock): Boolean = verify(buffer.snapshot(), block)
+
+    private fun add16(data: ByteArray, little: Boolean): Long {
+        var sum = 0L
+        var i = 0
+        while (i + 1 < data.size) { val a = data[i].toInt() and 0xFF; val b = data[i + 1].toInt() and 0xFF; sum = (sum + if (little) a or (b shl 8) else (a shl 8) or b) and 0xFFFF; i += 2 }
+        if (i < data.size) sum = (sum + (data[i].toInt() and 0xFF)) and 0xFFFF
+        return sum
+    }
+    private fun crc16(data: ByteArray, polynomial: Int, initial: Int): Int { var crc = initial and 0xFFFF; for (b in data) { crc = crc xor ((b.toInt() and 0xFF) shl 8); repeat(8) { crc = if ((crc and 0x8000) != 0) ((crc shl 1) xor polynomial) and 0xFFFF else (crc shl 1) and 0xFFFF } }; return crc }
+    private fun crc32(data: ByteArray, polynomial: Long, initial: Long): Long { var crc = initial and 0xFFFFFFFFL; for (b in data) { crc = crc xor (b.toLong() and 0xFF); repeat(8) { crc = if ((crc and 1L) != 0L) (crc ushr 1) xor polynomial else crc ushr 1 } }; return crc xor 0xFFFFFFFFL }
+}
+
+fun verifyAndCorrectBlock(data: ByteArray, block: ChecksumBlock): Boolean = ChecksumEngine.verifyAndCorrectBlock(data, block)

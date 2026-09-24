@@ -8,8 +8,8 @@ import android.graphics.Path
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
-import kotlin.math.cos
-import kotlin.math.sin
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.MapDefinition
 
 class Surface3DView @JvmOverloads constructor(
     context: Context,
@@ -17,108 +17,126 @@ class Surface3DView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private var data: Array<DoubleArray> = emptyArray()
-    private var rows = 0
-    private var cols = 0
+    private var bufferManager: BinaryBufferManager? = null
+    private var mapDefinition: MapDefinition? = null
 
-    private var angleX = 35.0
-    private var angleY = -45.0
-    private var prevX = 0f
-    private var prevY = 0f
+    private var rotX = 45.0
+    private var rotZ = 45.0
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
 
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.CYAN
-        strokeWidth = 3f
+        color = Color.parseColor("#448AFF")
+        strokeWidth = 2f
         style = Paint.Style.STROKE
     }
 
-    private val polyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val cellFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
 
-    fun setMapData(matrix: Array<DoubleArray>) {
-        this.data = matrix
-        this.rows = matrix.size
-        this.cols = if (matrix.isNotEmpty()) matrix[0].size else 0
+    fun setMap(manager: BinaryBufferManager, definition: MapDefinition) {
+        this.bufferManager = manager
+        this.mapDefinition = definition
         invalidate()
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                prevX = event.x
-                prevY = event.y
+                lastTouchX = event.x
+                lastTouchY = event.y
+                return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val dx = event.x - prevX
-                val dy = event.y - prevY
-                angleY += dx * 0.5
-                angleX -= dy * 0.5
-                prevX = event.x
-                prevY = event.y
+                val dx = event.x - lastTouchX
+                val dy = event.y - lastTouchY
+                rotZ += dx * 0.5
+                rotX = Math.max(10.0, Math.min(80.0, rotX - dy * 0.5))
+                lastTouchX = event.x
+                lastTouchY = event.y
                 invalidate()
+                return true
             }
         }
-        return true
+        return super.onTouchEvent(event)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        val manager = bufferManager ?: return
+        val map = mapDefinition ?: return
+
+        val rows = map.rows
+        val cols = map.columns
         if (rows < 2 || cols < 2) return
 
-        val centerX = width / 2f
-        val centerY = height / 2f
-        val scale = minOf(width, height) / 3f
+        val radX = Math.toRadians(rotX)
+        val radZ = Math.toRadians(rotZ)
+        val cosZ = Math.cos(radZ)
+        val sinZ = Math.sin(radZ)
+        val sinX = Math.sin(radX)
+        val cosX = Math.cos(radX)
 
+        val values = Array(rows) { DoubleArray(cols) }
         var minVal = Double.MAX_VALUE
-        var maxVal = Double.MIN_VALUE
+        var maxVal = -Double.MAX_VALUE
+
+        val bytesPerCell = map.representation.bitDepth.bytesPerElement
         for (r in 0 until rows) {
             for (c in 0 until cols) {
-                val v = data[r][c]
-                if (v < minVal) minVal = v
-                if (v > maxVal) maxVal = v
+                val offset = (r * cols + c) * bytesPerCell
+                val raw = manager.readRawValue(map.startAddress + offset, map.representation)
+                val phys = map.representation.rawToPhysical(raw)
+                values[r][c] = phys
+                if (phys < minVal) minVal = phys
+                if (phys > maxVal) maxVal = phys
             }
         }
-        val range = if (maxVal == minVal) 1.0 else (maxVal - minVal)
 
-        val radX = Math.toRadians(angleX)
-        val radY = Math.toRadians(angleY)
+        val range = if (maxVal == minVal) 1.0 else maxVal - minVal
+        val centerX = width / 2f
+        val centerY = height / 2f
+        val scale = Math.min(width, height) * 0.6f
 
-        fun project(r: Int, c: Int): Pair<Float, Float> {
-            val normX = (c.toFloat() / (cols - 1)) * 2f - 1f
-            val normZ = (r.toFloat() / (rows - 1)) * 2f - 1f
-            val normY = (((data[r][c] - minVal) / range).toFloat() * 2f - 1f) * 0.8f
+        val projX = Array(rows) { FloatArray(cols) }
+        val projY = Array(rows) { FloatArray(cols) }
 
-            val rotY_x = normX * cos(radY) + normZ * sin(radY)
-            val rotY_z = -normX * sin(radY) + normZ * cos(radY)
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val x = (c.toDouble() / (cols - 1)) - 0.5
+                val y = (r.toDouble() / (rows - 1)) - 0.5
+                val z = ((values[r][c] - minVal) / range) - 0.5
 
-            val rotX_y = normY * cos(radX) - rotY_z * sin(radX)
+                val rx = x * cosZ - y * sinZ
+                val ry = x * sinZ + y * cosZ
+                val rz = z
 
-            val screenX = centerX + (rotY_x * scale).toFloat()
-            val screenY = centerY - (rotX_y * scale).toFloat()
-            return Pair(screenX, screenY)
+                val finalY = (ry * cosX - rz * sinX)
+
+                projX[r][c] = (centerX + (rx * scale)).toFloat()
+                projY[r][c] = (centerY + (finalY * scale)).toFloat()
+            }
         }
 
-        val path = Path()
         for (r in 0 until rows - 1) {
             for (c in 0 until cols - 1) {
-                val p1 = project(r, c)
-                val p2 = project(r, c + 1)
-                val p3 = project(r + 1, c + 1)
-                val p4 = project(r + 1, c)
+                val avgVal = (values[r][c] + values[r+1][c] + values[r][c+1] + values[r+1][c+1]) / 4.0
+                val norm = ((avgVal - minVal) / range).toFloat().coerceIn(0f, 1f)
 
-                path.reset()
-                path.moveTo(p1.first, p1.second)
-                path.lineTo(p2.first, p2.second)
-                path.lineTo(p3.first, p3.second)
-                path.lineTo(p4.first, p4.second)
-                path.close()
+                val red = (norm * 255).toInt()
+                val blue = ((1f - norm) * 255).toInt()
+                cellFillPaint.color = Color.argb(180, red, 50, blue)
 
-                val avgVal = (data[r][c] + data[r][c + 1] + data[r + 1][c + 1] + data[r + 1][c]) / 4.0
-                val normAvg = ((avgVal - minVal) / range).toFloat().coerceIn(0f, 1f)
-                polyPaint.color = Color.argb(160, (normAvg * 255).toInt(), 50, ((1f - normAvg) * 255).toInt())
+                val path = Path().apply {
+                    moveTo(projX[r][c], projY[r][c])
+                    lineTo(projX[r][c + 1], projY[r][c + 1])
+                    lineTo(projX[r + 1][c + 1], projY[r + 1][c + 1])
+                    lineTo(projX[r + 1][c], projY[r + 1][c])
+                    close()
+                }
 
-                canvas.drawPath(path, polyPaint)
+                canvas.drawPath(path, cellFillPaint)
                 canvas.drawPath(path, linePaint)
             }
         }

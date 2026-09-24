@@ -24,12 +24,22 @@ logger.remove()
 logger.add(sys.stderr, level="ERROR", format="{time:HH:mm:ss} | <level>{level}</level> | {message}")
 
 def ensure_valid_cwd():
+    """Wymusza poprawne uprawnienia i ustawia katalog roboczy Termuxa."""
     try:
         if not PROJECT_DIR.exists():
             PROJECT_DIR.mkdir(parents=True, exist_ok=True)
         os.chdir(PROJECT_DIR)
-    except Exception:
-        os.chdir("/storage/emulated/0/Rozne/WinOls")
+    except Exception as e:
+        # Awaryjne odświeżenie uprawnień pamięci w Termuxie
+        try:
+            subprocess.run(["termux-setup-storage"], capture_output=True, timeout=2)
+        except Exception:
+            pass
+        try:
+            PROJECT_DIR.mkdir(parents=True, exist_ok=True)
+            os.chdir(PROJECT_DIR)
+        except Exception as inner_e:
+            console.print(f"[bold red][!] Krytyczny błąd katalogu/uprawnień: {inner_e}[/bold red]")
 
 def load_env_vars():
     ensure_valid_cwd()
@@ -56,16 +66,16 @@ def build_dynamic_project_context() -> str:
         dirs[:] = [d for d in dirs if d not in ['.git', 'build', '.idea', '.gradle', 'app/build']]
         for f in files:
             file_path = Path(root) / f
-            rel_path = file_path.relative_to(PROJECT_DIR)
-            file_list.append(str(rel_path))
-            
-            if f.lower().endswith(('.txt', '.md', '.json', '.kts')) or f.lower() == 'prąd.txt':
-                try:
+            try:
+                rel_path = file_path.relative_to(PROJECT_DIR)
+                file_list.append(str(rel_path))
+                
+                if f.lower().endswith(('.txt', '.md', '.json', '.kts')) or f.lower() == 'prąd.txt':
                     if file_path.stat().st_size < 50000:
                         with open(file_path, "r", encoding="utf-8", errors="ignore") as tf:
                             text_contents[str(rel_path)] = tf.read()
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     context_builder = [
         "[PROFIL I INSTRUKCJA SYSTEMOWA]",
@@ -141,20 +151,26 @@ def safe_git_sync():
     ensure_valid_cwd()
     git_dir = PROJECT_DIR / ".git"
     if not git_dir.exists():
-        console.print("[yellow][*] Katalog nie jest repozytorium Git (pomijam auto-sync). Wykonaj 'git init', aby włączyć synchronizację.[/yellow]")
+        console.print("[yellow][*] Katalog nie jest repozytorium Git (pomijam auto-sync). Wykonaj 'git init'.[/yellow]")
         return
     try:
+        status_res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
+        if not status_res.stdout.strip():
+            console.print("[yellow][*] Git nie widzi żadnych zmian na dysku do zatwierdzenia.[/yellow]")
+            return
+
         subprocess.run(["git", "add", "-A"], capture_output=True, check=True)
-        res = subprocess.run(["git", "commit", "-m", f"Auto sync {datetime.now().strftime('%H:%M:%S')}"], capture_output=True, text=True)
-        if res.returncode == 0:
+        commit_res = subprocess.run(["git", "commit", "-m", f"Auto sync {datetime.now().strftime('%H:%M:%S')}"], capture_output=True, text=True)
+        
+        if commit_res.returncode == 0:
             push_res = subprocess.run(["git", "push", "origin", "main"], capture_output=True, text=True)
             if push_res.returncode != 0:
                 subprocess.run(["git", "push", "origin", "master"], capture_output=True)
             console.print("[bold green][+] Zsynchronizowano z GitHub![/bold green]")
         else:
-            console.print("[yellow][*] Brak zmian w Git do wysłania.[/yellow]")
+            console.print(f"[yellow][*] Commit pominięty: {commit_res.stdout.strip()}[/yellow]")
     except Exception as e:
-        console.print(f"[yellow][*] Git sync pominięty (problem z uprawnieniami lub repo): {e}[/yellow]")
+        console.print(f"[yellow][*] Błąd synchronizacji Git: {e}[/yellow]")
 
 async def main():
     if not PSID or not PSIDTS:
@@ -167,9 +183,9 @@ async def main():
 
     console.clear()
     console.print(Panel.fit(
-        "[bold green]Asystent WinOLS Android - Tryb z bezpiecznym Git sync[/bold green]\n"
+        "[bold green]Asystent WinOLS Android - Tryb z wymuszaniem uprawnień Termux[/bold green]\n"
         f"Katalog roboczy: {PROJECT_DIR}\n"
-        "Status: Pliki zapisane pomyślnie, gotowy do dalszej pracy.",
+        "Status: Zabezpieczenie ścieżki i uprawnień aktywne.",
         border_style="green"
     ))
 

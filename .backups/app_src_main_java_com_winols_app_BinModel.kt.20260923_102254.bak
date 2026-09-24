@@ -1,0 +1,25 @@
+package com.winols.app
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.engine.ChecksumBlock
+import com.winols.app.engine.ChecksumEngine
+import com.winols.app.engine.MapFinderEngine
+import com.winols.app.export.ExcelExporter
+import com.winols.app.io.IntelHex
+import com.winols.app.model.MapDefinition
+import java.io.File
+
+class BinModel(
+    val bufferManager: BinaryBufferManager = BinaryBufferManager(),
+    val mapFinderEngine: MapFinderEngine = MapFinderEngine()
+) {
+    val detectedMaps = mutableListOf<MapDefinition>()
+    var hexBaseAddress: Long = 0
+    var loadedAsHex: Boolean = false
+
+    fun loadBin(file: File): Boolean = runCatching { bufferManager.loadFile(file).getOrThrow(); loadedAsHex = false; true }.getOrDefault(false)
+    fun loadHex(file: File): Boolean = runCatching { val image = IntelHex.parse(file); hexBaseAddress = image.baseAddress; bufferManager.load(image.data, file.name); loadedAsHex = true; true }.getOrDefault(false)
+    fun scan() { detectedMaps.clear(); detectedMaps.addAll(mapFinderEngine.scanPotentialMaps(bufferManager)) }
+    fun exportMaps(file: File): Boolean = ExcelExporter.exportMaps(detectedMaps, file)
+    fun verifyChecksum(block: ChecksumBlock): Boolean = ChecksumEngine.verify(bufferManager.snapshot(), block)
+}

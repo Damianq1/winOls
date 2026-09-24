@@ -1,0 +1,26 @@
+package com.winols.app.engine
+
+import com.winols.app.data.BinaryBufferManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+class ChecksumEngine(private val bufferManager: BinaryBufferManager) {
+
+    suspend fun calculate16BitSum(startOffset: Int, endOffset: Int): Int = withContext(Dispatchers.Default) {
+        val buf = bufferManager.getDirectBuffer() ?: return@withContext 0
+        var sum = 0
+        for (i in startOffset until endOffset) {
+            sum = (sum + (buf.get(i).toInt() and 0xFF)) and 0xFFFF
+        }
+        sum
+    }
+
+    suspend fun calculate32BitSum(startOffset: Int, endOffset: Int): Long = withContext(Dispatchers.Default) {
+        val buf = bufferManager.getDirectBuffer() ?: return@withContext 0L
+        var sum = 0L
+        for (i in startOffset until endOffset) {
+            sum = (sum + (buf.get(i).toLong() and 0xFFL)) and 0xFFFFFFFFL
+        }
+        sum
+    }
+}

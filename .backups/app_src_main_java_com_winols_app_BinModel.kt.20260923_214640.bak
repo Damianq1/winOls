@@ -1,0 +1,43 @@
+package com.winols.app
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.AxisDefinition
+import com.winols.app.model.MapDefinition
+
+class BinModel(val bufferManager: BinaryBufferManager) {
+    val maps: MutableList<MapDefinition> = mutableListOf()
+
+    fun getPhysicalValue(map: MapDefinition, row: Int, col: Int, useOriginal: Boolean = false): Double {
+        val elementOffset = (row * map.columns + col) * map.dataType.byteSize
+        val absoluteAddress = map.address + elementOffset
+        val rawValue = bufferManager.readValue(absoluteAddress, map.dataType, map.endianness, useOriginal)
+        return rawValue * map.factor + map.offset
+    }
+
+    fun setPhysicalValue(map: MapDefinition, row: Int, col: Int, value: Double) {
+        val rawValue = Math.round((value - map.offset) / map.factor)
+        val elementOffset = (row * map.columns + col) * map.dataType.byteSize
+        val absoluteAddress = map.address + elementOffset
+        bufferManager.writeValue(absoluteAddress, rawValue, map.dataType, map.endianness)
+    }
+
+    fun getAxisValues(axis: AxisDefinition, useOriginal: Boolean = false): DoubleArray {
+        val values = DoubleArray(axis.length)
+        for (i in 0 until axis.length) {
+            val addr = axis.address + i * axis.dataType.byteSize
+            val raw = bufferManager.readValue(addr, axis.dataType, axis.endianness, useOriginal)
+            values[i] = raw * axis.factor + axis.offset
+        }
+        return values
+    }
+
+    fun getMapTable(map: MapDefinition, useOriginal: Boolean = false): Array<DoubleArray> {
+        val table = Array(map.rows) { DoubleArray(map.columns) }
+        for (r in 0 until map.rows) {
+            for (c in 0 until map.columns) {
+                table[r][c] = getPhysicalValue(map, r, c, useOriginal)
+            }
+        }
+        return table
+    }
+}

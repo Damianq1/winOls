@@ -1,0 +1,70 @@
+package com.winols.app.data
+
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.ArrayDeque
+
+class BinaryBufferManager {
+
+    private var originalData: ByteArray = ByteArray(0)
+    private var modifiedData: ByteArray = ByteArray(0)
+
+    private val undoStack = ArrayDeque<ByteArray>()
+    private val redoStack = ArrayDeque<ByteArray>()
+
+    val size: Int
+        get() = modifiedData.size
+
+    val isModified: Boolean
+        get() = !originalData.contentEquals(modifiedData)
+
+    fun loadFromStream(inputStream: InputStream) {
+        val loaded = inputStream.readBytes()
+        originalData = loaded.copyOf()
+        modifiedData = loaded.copyOf()
+        undoStack.clear()
+        redoStack.clear()
+    }
+
+    fun loadFromFile(file: File) {
+        file.inputStream().use { loadFromStream(it) }
+    }
+
+    fun saveToStream(outputStream: OutputStream) {
+        outputStream.write(modifiedData)
+        outputStream.flush()
+    }
+
+    fun getByte(offset: Int): Byte {
+        require(offset in 0 until size) { "Offset out of bounds: $offset (size: $size)" }
+        return modifiedData[offset]
+    }
+
+    fun getOriginalByte(offset: Int): Byte {
+        require(offset in 0 until originalData.size) { "Offset out of bounds: $offset" }
+        return originalData[offset]
+    }
+
+    fun readBytes(offset: Int, length: Int): ByteArray {
+        require(offset >= 0 && offset + length <= size) { "Range out of bounds" }
+        return modifiedData.copyOfRange(offset, offset + length)
+    }
+
+    fun writeByte(offset: Int, value: Byte, recordHistory: Boolean = true) {
+        require(offset in 0 until size) { "Offset out of bounds: $offset" }
+        if (recordHistory) {
+            pushUndo()
+        }
+        modifiedData[offset] = value
+    }
+
+    fun writeBytes(offset: Int, bytes: ByteArray, recordHistory: Boolean = true) {
+        require(offset >= 0 && offset + bytes.size <= size) { "Range out of bounds" }
+        if (recordHistory) {
+            pushUndo()
+        }
+        System.arraycopy(bytes, 0, modifiedData, offset, bytes.size)
+    }
+
+    fun getBuffer(): ByteArray = modifiedData.copyOfOto implementacja modułów rdzennych projektu z zachowaniem spójności typów, reguł architektury Android/Kotlin oraz komentarzy `// FILE: ścieżka`.

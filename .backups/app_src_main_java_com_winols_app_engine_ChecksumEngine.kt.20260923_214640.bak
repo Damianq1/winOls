@@ -1,0 +1,76 @@
+package com.winols.app.engine
+
+class ChecksumEngine {
+
+    enum class Algorithm {
+        SIMPLE_ADD_16_BE,
+        SIMPLE_ADD_16_LE,
+        CRC32,
+        EDC15_GENERIC
+    }
+
+    data class ChecksumBlock(
+        val startAddress: Int,
+        val endAddress: Int,
+        val targetAddress: Int,
+        val algorithm: Algorithm
+    )
+
+    fun calculateChecksum(buffer: ByteArray, block: ChecksumBlock): Int {
+        return when (block.algorithm) {
+            Algorithm.SIMPLE_ADD_16_BE, Algorithm.SIMPLE_ADD_16_LE -> {
+                var sum = 0
+                val isBigEndian = block.algorithm == Algorithm.SIMPLE_ADD_16_BE
+                var addr = block.startAddress
+                while (addr <= block.endAddress - 1) {
+                    val b0 = buffer[addr].toInt() and 0xFF
+                    val b1 = buffer[addr + 1].toInt() and 0xFF
+                    val word = if (isBigEndian) (b0 shl 8) or b1 else (b1 shl 8) or b0
+                    sum = (sum + word) and 0xFFFF
+                    addr += 2
+                }
+                sum
+            }
+            Algorithm.CRC32 -> {
+                val crc = java.util.zip.CRC32()
+                val length = (block.endAddress - block.startAddress) + 1
+                crc.update(buffer, block.startAddress, length)
+                crc.value.toInt()
+            }
+            Algorithm.EDC15_GENERIC -> calculateEdc15Checksum(buffer, block.startAddress, block.endAddress)
+        }
+    }
+
+    fun verifyAndPatch(buffer: ByteArray, block: ChecksumBlock): Boolean {
+        val calculated = calculateChecksum(buffer, block)
+        return try {
+            when (block.algorithm) {
+                Algorithm.SIMPLE_ADD_16_BE -> {
+                    buffer[block.targetAddress] = ((calculated shr 8) and 0xFF).toByte()
+                    buffer[block.targetAddress + 1] = (calculated and 0xFF).toByte()
+                }
+                Algorithm.SIMPLE_ADD_16_LE -> {
+                    buffer[block.targetAddress] = (calculated and 0xFF).toByte()
+                    buffer[block.targetAddress + 1] = ((calculated shr 8) and 0xFF).toByte()
+                }
+                Algorithm.CRC32, Algorithm.EDC15_GENERIC -> {
+                    buffer[block.targetAddress] = ((calculated shr 24) and 0xFF).toByte()
+                    buffer[block.targetAddress + 1] = ((calculated shr 16) and 0xFF).toByte()
+                    buffer[block.targetAddress + 2] = ((calculated shr 8) and 0xFF).toByte()
+                    buffer[block.targetAddress + 3] = (calculated and 0xFF).toByte()
+                }
+            }
+            true
+        } catch (_: IndexOutOfBoundsException) {
+            false
+        }
+    }
+
+    private fun calculateEdc15Checksum(buffer: ByteArray, start: Int, end: Int): Int {
+        var acc = 0
+        for (i in start..end) {
+            acc = (acc + (buffer[i].toInt() and 0xFF)) and 0xFFFFFFFF.toInt()
+        }
+        return acc
+    }
+}

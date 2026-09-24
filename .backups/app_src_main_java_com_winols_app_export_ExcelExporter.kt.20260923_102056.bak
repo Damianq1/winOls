@@ -1,0 +1,44 @@
+package com.winols.app.export
+
+import com.winols.app.model.MapDefinition
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.charset.StandardCharsets
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+
+object ExcelExporter {
+    fun exportDiffToCsv(outputFile: File, oriBuffer: ByteArray, modBuffer: ByteArray) {
+        outputFile.parentFile?.mkdirs()
+        outputFile.outputStream().bufferedWriter(StandardCharsets.UTF_8).use { w ->
+            w.appendLine("Address,Original (Hex),Modified (Hex),Delta")
+            val limit = minOf(oriBuffer.size, modBuffer.size)
+            for (i in 0 until limit) {
+                val a = oriBuffer[i].toInt() and 0xFF; val b = modBuffer[i].toInt() and 0xFF
+                if (a != b) w.appendLine("0x%06X,%02X,%02X,%d".format(i, a, b, b - a))
+            }
+        }
+    }
+
+    fun exportMaps(maps: List<MapDefinition>, outputFile: File): Boolean = runCatching {
+        outputFile.parentFile?.mkdirs()
+        ZipOutputStream(FileOutputStream(outputFile)).use { zip ->
+            put(zip, "[Content_Types].xml", """<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>""")
+            put(zip, "_rels/.rels", """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>""")
+            put(zip, "xl/workbook.xml", """<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Maps" sheetId="1" r:id="rId1"/></sheets></workbook>""")
+            put(zip, "xl/_rels/workbook.xml.rels", """<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>""")
+            val rows = buildString {
+                append("<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>Name</t></is></c><c r=\"B1\" t=\"inlineStr\"><is><t>Address</t></is></c><c r=\"C1\" t=\"inlineStr\"><is><t>Rows</t></is></c><c r=\"D1\" t=\"inlineStr\"><is><t>Columns</t></is></c><c r=\"E1\" t=\"inlineStr\"><is><t>Type</t></is></c><c r=\"F1\" t=\"inlineStr\"><is><t>Factor</t></is></c><c r=\"G1\" t=\"inlineStr\"><is><t>Offset</t></is></c><c r=\"H1\" t=\"inlineStr\"><is><t>Confidence</t></is></c></row>")
+                maps.forEachIndexed { i, m -> val r = i + 2; append("<row r=\"$r\">${cell("A$r", m.name)}<c r=\"B$r\"><v>${m.address}</v></c><c r=\"C$r\"><v>${m.rows}</v></c><c r=\"D$r\"><v>${m.columns}</v></c>${cell("E$r", m.dataType.name)}<c r=\"F$r\"><v>${m.factor}</v></c><c r=\"G$r\"><v>${m.offset}</v></c><c r=\"H$r\"><v>${m.confidence}</v></c></row>") }
+            }
+            put(zip, "xl/worksheets/sheet1.xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>$rows</sheetData></worksheet>")
+        }
+        true
+    }.getOrDefault(false)
+
+    private fun cell(ref: String, value: String) = "<c r=\"$ref\" t=\"inlineStr\"><is><t>${xml(value)}</t></is></c>"
+    private fun xml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+    private fun put(zip: ZipOutputStream, name: String, content: String) { zip.putNextEntry(ZipEntry(name)); zip.write(content.toByteArray(StandardCharsets.UTF_8)); zip.closeEntry() }
+}
+
+fun exportDiffToCsv(outputFile: File, oriBuffer: ByteArray, modBuffer: ByteArray) = ExcelExporter.exportDiffToCsv(outputFile, oriBuffer, modBuffer)

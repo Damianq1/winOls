@@ -1,0 +1,74 @@
+package com.winols.app.edit
+
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.model.MapDefinition
+
+class MapEditor(
+    private val bufferManager: BinaryBufferManager,
+    private val mapDef: MapDefinition
+) {
+
+    fun readMatrix(): Array<DoubleArray> {
+        val matrix = Array(mapDef.rows) { DoubleArray(mapDef.columns) }
+        var currentAddr = mapDef.address
+        for (r in 0 until mapDef.rows) {
+            for (c in 0 until mapDef.columns) {
+                val raw = bufferManager.readRawValue(currentAddr, mapDef.dataType)
+                matrix[r][c] = mapDef.rawToPhysical(raw)
+                currentAddr += mapDef.dataType.byteSize
+            }
+        }
+        return matrix
+    }
+
+    fun applyOffset(value: Double) = transformMatrix { it + value }
+
+    fun applyPercentage(percentage: Double) = transformMatrix { it * (1.0 + (percentage / 100.0)) }
+
+    fun applySetValue(value: Double) = transformMatrix { value }
+
+    fun applySmooth() {
+        val original = readMatrix()
+        val smoothed = Array(mapDef.rows) { DoubleArray(mapDef.columns) }
+
+        for (r in 0 until mapDef.rows) {
+            for (c in 0 until mapDef.columns) {
+                var sum = 0.0
+                var count = 0
+                for (dr in -1..1) {
+                    for (dc in -1..1) {
+                        val nr = r + dr
+                        val nc = c + dc
+                        if (nr in 0 until mapDef.rows && nc in 0 until mapDef.columns) {
+                            sum += original[nr][nc]
+                            count++
+                        }
+                    }
+                }
+                smoothed[r][c] = sum / count
+            }
+        }
+        writeMatrix(smoothed)
+    }
+
+    private inline fun transformMatrix(transform: (Double) -> Double) {
+        val current = readMatrix()
+        for (r in 0 until mapDef.rows) {
+            for (c in 0 until mapDef.columns) {
+                current[r][c] = transform(current[r][c])
+            }
+        }
+        writeMatrix(current)
+    }
+
+    private fun writeMatrix(matrix: Array<DoubleArray>) {
+        var currentAddr = mapDef.address
+        for (r in 0 until mapDef.rows) {
+            for (c in 0 until mapDef.columns) {
+                val raw = mapDef.physicalToRaw(matrix[r][c])
+                bufferManager.writeRawValue(currentAddr, mapDef.dataType, raw)
+                currentAddr += mapDef.dataType.byteSize
+            }
+        }
+    }
+}

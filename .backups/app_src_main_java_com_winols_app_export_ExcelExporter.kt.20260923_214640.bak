@@ -1,0 +1,43 @@
+package com.winols.app.export
+
+import com.winols.app.BinModel
+import com.winols.app.model.MapDefinition
+import java.io.File
+import java.io.FileWriter
+
+class ExcelExporter(private val model: BinModel) {
+
+    /**
+     * Eksportuje różnice pomiędzy ORI a MOD dla danej mapy do formatu CSV (czytelnego dla MS Excel).
+     */
+    fun exportMapToCsv(map: MapDefinition, destination: File) {
+        FileWriter(destination).use { writer ->
+            writer.append("Row,Col,Original,Modified,Delta,DeltaPercent\n")
+            for (r in 0 until map.rows) {
+                for (c in 0 until map.columns) {
+                    val ori = model.getPhysicalValue(map, r, c, useOriginal = true)
+                    val mod = model.getPhysicalValue(map, r, c, useOriginal = false)
+                    val delta = mod - ori
+                    val pct = if (ori != 0.0) (delta / ori) * 100.0 else 0.0
+
+                    writer.append("$r,$c,${"%.4f".format(ori)},${"%.4f".format(mod)},${"%.4f".format(delta)},${"%.2f".format(pct)}%\n")
+                }
+            }
+        }
+    }
+
+    /**
+     * Eksportuje wszystkie zmodyfikowane komórki całego bufora.
+     */
+    fun exportAllDifferences(destination: File) {
+        val diffOffsets = model.bufferManager.getDifferences()
+        FileWriter(destination).use { writer ->
+            writer.append("OffsetHex,OriginalByteHex,ModifiedByteHex\n")
+            for (off in diffOffsets) {
+                val ori = model.bufferManager.getRawByte(off, useOriginal = true).toInt() and 0xFF
+                val mod = model.bufferManager.getRawByte(off, useOriginal = false).toInt() and 0xFF
+                writer.append("0x${Integer.toHexString(off).uppercase()},0x${Integer.toHexString(ori).uppercase()},0x${Integer.toHexString(mod).uppercase()}\n")
+            }
+        }
+    }
+}
