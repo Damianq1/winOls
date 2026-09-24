@@ -7,8 +7,8 @@ import java.io.InputStream
 import java.io.OutputStream
 
 /**
- * Zapewnia asynchroniczne i bezpieczne dla wątku operacje wejścia/wyjścia
- * na plikach binarnych Flash / EEPROM.
+ * Asynchroniczne operacje wejścia/wyjścia (I/O) gwarantujące
+ * brak obciążenia i blokowania głównego wątku UI.
  */
 class AsyncBinaryOperations(private val bufferManager: BinaryBufferManager) {
 
@@ -38,5 +38,9 @@ class AsyncBinaryOperations(private val bufferManager: BinaryBufferManager) {
         runCatching {
             outputStream.use { it.write(bufferManager.rawBuffer) }
         }
+    }
+
+    suspend fun calculateDifferencesAsync(): List<Long> = withContext(Dispatchers.Default) {
+        bufferManager.getDifferences()
     }
 }

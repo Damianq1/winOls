@@ -9,9 +9,15 @@ import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.winols.app.databinding.ActivityMainBinding
 import com.winols.app.edit.MapEditor
 import com.winols.app.model.MapDefinition
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class EditorViewMode {
     TABLE_GRID,
@@ -38,6 +44,48 @@ class MainActivity : AppCompatActivity() {
 
         mapEditor = MapEditor(binModel)
         setupListeners()
+        observeModel()
+    }
+
+    private fun observeModel() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    binModel.loadingState.collect { state ->
+                        when (state) {
+                            is BinLoadingState.Loading -> {
+                                binding.btnLoadBin.isEnabled = false
+                                Toast.makeText(this@MainActivity, "Wczytywanie i skanowanie w tle...", Toast.LENGTH_SHORT).show()
+                            }
+                            is BinLoadingState.Success -> {
+                                binding.btnLoadBin.isEnabled = true
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "Załadowano ${state.byteCount} bajtów. Znaleziono map: ${state.mapCount}",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                            is BinLoadingState.Error -> {
+                                binding.btnLoadBin.isEnabled = true
+                                Toast.makeText(this@MainActivity, "Błąd: ${state.message}", Toast.LENGTH_LONG).show()
+                            }
+                            BinLoadingState.Idle -> {
+                                binding.btnLoadBin.isEnabled = true
+                            }
+                        }
+                    }
+                }
+
+                launch {
+                    binModel.mapsFlow.collect { maps ->
+                        if (maps.isNotEmpty() && currentSelectedMap == null) {
+                            currentSelectedMap = maps[0]
+                            bindActiveViews(maps[0])
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun setupListeners() {
@@ -50,15 +98,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnSelectMap.setOnClickListener {
-            if (binModel.maps.isEmpty()) {
+            val maps = binModel.maps
+            if (maps.isEmpty()) {
                 Toast.makeText(this, "Brak zidentyfikowanych map w pliku", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            val mapNames = binModel.maps.map { it.name }.toTypedArray()
+            val mapNames = maps.map { it.name }.toTypedArray()
             AlertDialog.Builder(this)
                 .setTitle("Wybierz mapę ECU")
                 .setItems(mapNames) { _, which ->
-                    val chosen = binModel.maps[which]
+                    val chosen = maps[which]
                     currentSelectedMap = chosen
                     bindActiveViews(chosen)
                 }
@@ -123,23 +172,23 @@ class MainActivity : AppCompatActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_CODE_OPEN_BIN && resultCode == Activity.RESULT_OK) {
-            data?.data?.let { uri -> loadBinaryUri(uri) }
+            data?.data?.let { uri -> loadBinaryUriAsync(uri) }
         }
     }
 
-    private fun loadBinaryUri(uri: Uri) {
-        contentResolver.openInputStream(uri)?.use { stream ->
-            val bytes = stream.readBytes()
-            binModel.loadBytes(bytes)
-            Toast.makeText(
-                this,
-                "Załadowano ${bytes.size} bajtów. Wykryte mapy: ${binModel.maps.size}",
-                Toast.LENGTH_LONG
-            ).show()
-
-            if (binModel.maps.isNotEmpty()) {
-                currentSelectedMap = binModel.maps[0]
-                bindActiveViews(binModel.maps[0])
+    private fun loadBinaryUriAsync(uri: Uri) {
+        lifecycleScope.launch {
+            try {
+                val stream = withContext(Dispatchers.IO) {
+                    contentResolver.openInputStream(uri)
+                }
+                if (stream != null) {
+                    binModel.loadStreamAsync(stream)
+                } else {
+                    Toast.makeText(this@MainActivity, "Nie udało się otworzyć strumienia pliku", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Błąd odczytu: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
             }
         }
     }
