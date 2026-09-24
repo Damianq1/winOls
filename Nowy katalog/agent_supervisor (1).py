@@ -40,6 +40,27 @@ def load_env_vars():
                     env_dict[parts[0].strip()] = parts[1].strip()
     return env_dict
 
+def get_lightweight_structure():
+    ensure_valid_cwd()
+    files = []
+    for root, dirs, names in os.walk(str(PROJECT_PATH)):
+        dirs[:] = [d for d in dirs if d not in {".git", "build", ".idea", "__pycache__"}]
+        for f in names:
+            try:
+                files.append(str((Path(root).relative_to(PROJECT_PATH) / f)))
+            except Exception:
+                pass
+    return [f" - {p}" for p in sorted(files)]
+
+def read_file(path_str):
+    target = PROJECT_PATH / path_str
+    if target.exists() and target.is_file():
+        try:
+            return target.read_text(encoding="utf-8")
+        except:
+            return ""
+    return ""
+
 def apply_changes(response_text):
     pattern = re.compile(
         r"(?:###\s*([^\n]+)|(?:#|//)\s*FILE:\s*([^\n]+))\s*\n+```[a-zA-Z]*\n(.*?)\n```",
@@ -110,7 +131,7 @@ def run_gradle_build():
 async def main():
     ensure_valid_cwd()
     console.clear()
-    console.print(Panel.fit("[bold green]WinOls Self-Healing Autonomous Agent (Fast GitSync)[/bold green]"))
+    console.print(Panel.fit("[bold green]WinOls Self-Healing Autonomous Agent (z GitSync)[/bold green]"))
 
     env = load_env_vars()
     psid = env.get("__Secure-1PSID", "")
@@ -143,7 +164,7 @@ async def main():
 
         if success:
             console.print("[bold green][✓] KOD KOMPILUJE SIĘ BEZ BŁĘDÓW! Projekt jest w pełni sprawny.[/bold green]")
-            push_to_github()
+            push_to_github() # Wypchnij stan produkcyjny na GitHub
             
             user_next = console.input("\n[bold magenta]Wszystko działa. Wpisz nowe zadanie dla agenta (lub 'exit' aby zakończyć) > [/bold magenta]").strip()
             if user_next.lower() in {"exit", "quit", "q"}:
@@ -157,13 +178,25 @@ async def main():
         else:
             console.print("[bold red][!] Wykryto błąd kompilacji/builda. Przekazuję do Gemini...[/bold red]")
 
-        # Lekki, odchudzony prompt bez ciężkiego drzewa plików i wklejania całego kodu
+        # 2. Zbieramy kontekst plików i struktury
+        struct = get_lightweight_structure()
+        file_context = ""
+        
+        for line in struct:
+            filename = line.strip(" -")
+            if filename in build_output or Path(filename).name in build_output:
+                content = read_file(filename)
+                if content:
+                    file_context += f"\n\n[TREŚĆ PLIKU {filename}]:\n```kotlin\n{content}\n```"
+
         prompt = (
             f"Projekt: WinOls (Android ECU Binary Editor)\n"
-            f"Wystąpił błąd podczas kompilacji Gradle. Przeanalizuj poniższy komunikat, wskaż plik i podaj poprawkę:\n\n"
-            f"--- BŁĄD ---\n{build_output}\n\n"
-            f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą. Napraw błąd w kodzie Kotlin i zwróć zmianę w formacie:\n"
-            f"### ścieżka/do/pliku\n```kotlin\n// kod poprawionego pliku\n```"
+            f"Struktura plików:\n" + "\n".join(struct) +
+            file_context +
+            f"\n\n[WYNIK / BŁĄD BUILDACIA LUB ZADANIE]:\n{build_output}\n\n"
+            f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą. Przeanalizuj błąd kompilacji lub zadanie, "
+            f"napraw kod, zaimplementuj poprawkę i zwróć ją w formacie:\n"
+            f"### ścieżka/do/pliku\n```kotlin\n// kod\n```"
         )
 
         console.print("[cyan][*] Wysyłanie błędu do Gemini i oczekiwanie na poprawkę...[/cyan]")
@@ -185,6 +218,7 @@ async def main():
             else:
                 run_git_commit("Auto-commit po próbie naprawy (brak bezpośrednich ścieżek)")
             
+            # Wypchnij poprawki automatycznie na GitHub
             push_to_github()
         else:
             console.print("[yellow][!] Pusta odpowiedź od modelu. Ponawiam za chwilę...[/yellow]")
