@@ -4,7 +4,7 @@ plugins {
 }
 
 // Sekcje allprojects / subprojects z blokiem repositories zostały usunięte.
-// Repozytoria są teraz zarządzane centralnie w settings.gradle przez dependencyResolutionManagement.
-tasks.register('clean', Delete) {
-    delete rootProject.buildDir
+// Repozytoria są zarządzane centralnie w settings.gradle.kts.
+tasks.register<Delete>("clean") {
+    delete(rootProject.layout.buildDirectory)
 }
