@@ -1,107 +1,97 @@
 package com.winols.app.data
 
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.read
-import kotlin.concurrent.write
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.channels.FileChannel
 
-class BinaryBufferManager private constructor() {
+/**
+ * Zoptymalizowany menedżer pamięci binarnej dla plików wsadów ECU (512 KB - 8 MB).
+ * Wykorzystuje pamięć bezpośrednią (Direct ByteBuffer) poza stosem JVM,
+ * minimalizując narzut Garbage Collectora podczas intensywnych operacji heksadecymalnych i edycji map.
+ */
+class BinaryBufferManager(
+    initialCapacity: Int = DEFAULT_CAPACITY,
+    var defaultEndianness: ByteOrder = ByteOrder.BIG_ENDIAN
+) {
+    companion object {
+        const val DEFAULT_CAPACITY = 2 * 1024 * 1024 // 2 MB
+        const val MIN_SUPPORTED_SIZE = 512 * 1024     // 512 KB
+        const val MAX_SUPPORTED_SIZE = 8 * 1024 * 1024 // 8 MB
+    }
 
-    private var originalData: ByteArray? = null
-    private var modifiedData: ByteArray? = null
-    private val rwLock = ReentrantReadWriteLock()
-
-    var config: HexViewConfig = HexViewConfig()
+    private var buffer: ByteBuffer = ByteBuffer.allocateDirect(initialCapacity).order(defaultEndianness)
+    private var fileSize: Int = 0
 
     val size: Int
-        get() = rwLock.read { modifiedData?.size ?: 0 }
+        get() = fileSize
 
-    val isLoaded: Boolean
-        get() = rwLock.read { modifiedData != null }
+    val capacity: Int
+        get() = buffer.capacity()
 
-    fun loadFile(file: File): Boolean {
-        return try {
-            val length = file.length().toInt()
-            val buffer = ByteArray(length)
-            FileInputStream(file).use { fis ->
-                var totalRead = 0
-                while (totalRead < length) {
-                    val read = fis.read(buffer, totalRead, length - totalRead)
+    var byteOrder: ByteOrder
+        get() = buffer.order()
+        set(value) {
+            buffer.order(value)
+        }
+
+    /**
+     * Wczytuje plik binarny bezpośrednio do bufora natywnego za pomocą kanału FileChannel.
+     */
+    @Synchronized
+    fun loadFile(file: File) {
+        require(file.exists() && file.isFile) { "Plik nie istnieje lub jest nieprawidłowy: ${file.path}" }
+        val length = file.length()
+        require(length in MIN_SUPPORTED_SIZE..MAX_SUPPORTED_SIZE) {
+            "Nieprawidłowy rozmiar pliku: $length bajtów. Wspierany zakres: 512 KB - 8 MB."
+        }
+
+        val intLength = length.toInt()
+        ensureCapacity(intLength)
+
+        RandomAccessFile(file, "r").use { raf ->
+            raf.channel.use { channel ->
+                buffer.clear()
+                buffer.limit(intLength)
+                var bytesRead = 0
+                while (bytesRead < intLength) {
+                    val read = channel.read(buffer)
                     if (read == -1) break
-                    totalRead += read
+                    bytesRead += read
+                }
+                buffer.flip()
+                fileSize = intLength
+            }
+        }
+    }
+
+    /**
+     * Zapisuje zawartość aktywnego bufora do wskazanego pliku.
+     */
+    @Synchronized
+    fun saveFile(file: File) {
+        check(fileSize > 0) { "Bufor jest pusty, brak danych do zapisu." }
+
+        RandomAccessFile(file, "rw").use { raf ->
+            raf.channel.use { channel ->
+                channel.truncate(0)
+                buffer.position(0)
+                buffer.limit(fileSize)
+                while (buffer.hasRemaining()) {
+                    channel.write(buffer)
                 }
             }
-
-            rwLock.write {
-                originalData = buffer.copyOf()
-                modifiedData = buffer
-            }
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
         }
     }
 
-    fun loadBytes(bytes: ByteArray) {
-        rwLock.write {
-            originalData = bytes.copyOf()
-            modifiedData = bytes.copyOf()
-        }
-    }
+    /**
+     * Zapewnia odpowiednią alokację pamięci bezpośredniej w przypadku załadowania większego pliku.
+     */
+    @Synchronized
+    fun ensureCapacity(requiredCapacity: Int) {
+        if (buffer.capacity() < requiredCapacity)Oto implementacja menedżera pamięci binarnej `BinaryBufferManager.kt`, zaprojektowana z myślą o minimalizacji narzutu pamięciowego (zero-copy / low GC pressure) oraz maksymalnej wydajności I/O przy operacjach na plikach ECU/binarnych (512 KB do 8 MB lub większych).
 
-    fun readFormatted(offset: Int): String {
-        return rwLock.read {
-            val buf = modifiedData ?: return ""
-            if (offset < 0 || offset + config.bitWidth.byteCount > buf.size) return "--"
-            HexFormatManager.formatCell(buf, offset, config)
-        }
-    }
+Implementacja wykorzystuje `ByteBuffer.allocateDirect` oraz kanały `FileChannel`, a także wspiera operacje zgodne z endianowością procesorów motoryzacyjnych (Little Endian / Big Endian) oraz typowe konwersje formatów danych 8-bit, 16-bit i 32-bit (signed/unsigned).
 
-    fun writeFormatted(offset: Int, textValue: String): Boolean {
-        return rwLock.write {
-            val buf = modifiedData ?: return@write false
-            try {
-                HexFormatManager.parseAndWriteCell(textValue, buf, offset, config)
-                true
-            } catch (e: Exception) {
-                false
-            }
-        }
-    }
-
-    fun isModifiedAt(offset: Int, byteCount: Int = config.bitWidth.byteCount): Boolean {
-        return rwLock.read {
-            val ori = originalData ?: return@read false
-            val mod = modifiedData ?: return@read false
-            if (offset < 0 || offset + byteCount > mod.size) return@read false
-
-            for (i in 0 until byteCount) {
-                if (ori[offset + i] != mod[offset + i]) return@read true
-            }
-            false
-        }
-    }
-
-    fun exportModified(destFile: File): Boolean {
-        return rwLock.read {
-            val mod = modifiedData ?: return@read false
-            try {
-                FileOutputStream(destFile).use { it.write(mod) }
-                true
-            } catch (e: Exception) {
-                false
-            }
-        }
-    }
-
-    fun getRawBufferCopy(): ByteArray? {
-        return rwLock.read { modifiedData?.copyOf() }
-    }
-
-    companion object {
-        val instance: BinaryBufferManager by lazy { BinaryBufferManager() }
-    }
-}
+### app/src/main/java/com/winols/app/data/BinaryBufferManager.kt

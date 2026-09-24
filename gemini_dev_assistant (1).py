@@ -56,11 +56,11 @@ load_env_vars()
 
 PAPISID = os.environ.get("PAPISID", "")
 PSIDTS = os.environ.get("GEMINI_PSIDTS", "")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 
 def build_dynamic_project_context() -> str:
     ensure_valid_cwd()
     file_list = []
+    text_contents = {}
     
     for root, dirs, files in os.walk(PROJECT_DIR):
         dirs[:] = [d for d in dirs if d not in ['.git', 'build', '.idea', '.gradle', 'app/build']]
@@ -69,6 +69,9 @@ def build_dynamic_project_context() -> str:
             try:
                 rel_path = file_path.relative_to(PROJECT_DIR)
                 file_list.append(str(rel_path))
+                if f.lower().endswith(('.kt', '.xml', '.kts', '.py')) and file_path.stat().st_size < 25000:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as tf:
+                        text_contents[str(rel_path)] = tf.read()
             except Exception:
                 pass
 
@@ -80,10 +83,15 @@ def build_dynamic_project_context() -> str:
     ]
     
     context_builder.append(f"Liczba plików: {len(file_list)}")
-    for f in sorted(file_list)[:30]:
+    for f in sorted(file_list)[:40]:
         context_builder.append(f" - {f}")
+        
+    if text_contents:
+        context_builder.append("\n[AKTUALNE KLUCZOWE PLIKI]")
+        for fname, content in list(text_contents.items())[:4]:
+            context_builder.append(f"\n--- {fname} ---\n{content}\n------------------------")
 
-    context_builder.append("\n[ZASADA] Zwracaj zmodyfikowane lub nowe pliki w formacie: ### ścieżka/do/Pliku\n```kotlin\n...\n```")
+    context_builder.append("\n[ZASADA] Zwracaj zmodyfikowane lub nowe pliki w formacie: ### ścieżka/do/Pliku")
     return "\n".join(context_builder)
 
 def parse_multi_file_code(response_text: str) -> list:
@@ -118,59 +126,7 @@ def apply_file_changes(parsed_files):
             f.write(content)
         console.print(f"[bold green][+] Zaktualizowano lokalnie: {clean_path}[/bold green]")
 
-def fetch_failed_log(logs_url: str) -> str:
-    try:
-        headers = {"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
-        if GITHUB_TOKEN:
-            headers["Authorization"] = f"token {GITHUB_TOKEN}"
-        req = urllib.request.Request(logs_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            jobs_url = data.get("jobs_url")
-            if jobs_url:
-                req_jobs = urllib.request.Request(jobs_url, headers=headers)
-                with urllib.request.urlopen(req_jobs, timeout=10) as j_resp:
-                    j_data = json.loads(j_resp.read().decode())
-                    for job in j_data.get("jobs", []):
-                        if job.get("conclusion") == "failure":
-                            steps_summary = []
-                            for step in job.get("steps", []):
-                                if step.get("conclusion") == "failure":
-                                    steps_summary.append(f"Krok nieudany: {step.get('name')}")
-                            return "\n".join(steps_summary) or "Wykryto błąd budowania w jobie Actions."
-    except Exception:
-        pass
-    return "Nie udało się automatycznie pobrać szczegółów logów błędu."
-
-async def wait_for_github_actions() -> tuple[str, str]:
-    start_time = time.time()
-    headers = {"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"token {GITHUB_TOKEN}"
-
-    with Live(console=console, refresh_per_second=2) as live:
-        while True:
-            elapsed = time.time() - start_time
-            live.update(f"[bold cyan][*] Oczekiwanie na wynik GitHub Actions... [yellow]({elapsed:.1f}s)[/yellow][/bold cyan]")
-            
-            try:
-                req = urllib.request.Request(GITHUB_REPO_API, headers=headers)
-                with urllib.request.urlopen(req, timeout=5) as response:
-                    data = json.loads(response.read().decode())
-                    runs = data.get("workflow_runs", [])
-                    if runs:
-                        latest = runs[0]
-                        status = latest.get("status")
-                        conclusion = latest.get("conclusion")
-                        
-                        if status == "completed":
-                            return conclusion, latest.get("url", "")
-            except Exception:
-                pass
-
-            await asyncio.sleep(4)
-
-async def git_sync_and_monitor(client) -> tuple[bool, str]:
+def git_sync_and_check():
     ensure_valid_cwd()
     console.print("\n[bold cyan][*] Synchronizacja zmian z GitHubem...[/bold cyan]")
     try:
@@ -184,80 +140,35 @@ async def git_sync_and_monitor(client) -> tuple[bool, str]:
                 console.print("[bold green][ok] Pomyślnie wypchnięto zmiany do GitHub.[/bold green]")
             else:
                 console.print(f"[bold red][!] Błąd git push: {push_res.stderr.strip()}[/bold red]")
-                return False, ""
         else:
             console.print("[dim cyan][*] Brak nowych zmian do zatwierdzenia w Git.[/dim cyan]")
-            return True, ""
 
-        conclusion, run_url = await wait_for_github_actions()
-        
-        if conclusion == "success":
-            console.print("[bold green][ok] GitHub Actions -> Budowanie zakończone SUKCESEM![/bold green]")
-            return True, ""
-        else:
-            console.print("[bold red][!] GitHub Actions -> Budowanie ZAKOŃCZONE BŁĘDEM (failure)![/bold red]")
-            console.print("[bold yellow][*] Pobieranie informacji o błędzie i generowanie poprawki...[/bold yellow]")
-            
-            error_details = fetch_failed_log(run_url)
-            prompt_fix = (
-                f"[AUTOMATYCZNE ZGŁOSZENIE BŁĘDU GITHUB ACTIONS]\n"
-                f"Ostatnia zmiana wywołała błąd w GitHub Actions (status: failure).\n"
-                f"Podsumowanie błędów: {error_details}\n\n"
-                f"Przeanalizuj zmiany, znajdź przyczynę błędu i podaj poprawione pliki."
-            )
-            return False, prompt_fix
+        console.print("[bold cyan][*] Sprawdzanie statusu GitHub Actions...[/bold cyan]")
+        req = urllib.request.Request(
+            GITHUB_REPO_API,
+            headers={"User-Agent": "SmartIDE-Assistant", "Accept": "application/vnd.github+json"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            runs = data.get("workflow_runs", [])
+            if runs:
+                latest = runs[0]
+                status = latest.get("status")
+                conclusion = latest.get("conclusion")
+                res_color = "green" if conclusion == "success" else ("yellow" if status == "in_progress" else "red")
+                console.print(f"[{res_color}][ok] GitHub Actions -> Status: {status} | Wynik: {conclusion}[/{res_color}]")
+            else:
+                console.print("[dim cyan][*] Brak historii akcji GitHub.[/dim cyan]")
 
     except Exception as e:
-        console.print(f"[bold red][!] Błąd podczas synchronizacji/monitorowania GitHub Actions: {e}[/bold red]")
-        return True, ""
-
-async def send_prompt_with_spinner(client, prompt_text: str):
-    response_text = ""
-    success = False
-    start_time = time.time()
-
-    async def send_task():
-        nonlocal response_text, success
-        # Użycie świeżej sesji czatu zapobiega przepełnieniu tokenów/błędom 405
-        chat = client.start_chat()
-        response = await chat.send_message(prompt_text)
-        response_text = response.text if hasattr(response, "text") else str(response)
-        success = True
-
-    task = asyncio.create_task(send_task())
-
-    with Live(console=console, refresh_per_second=4) as live:
-        while not task.done():
-            elapsed = time.time() - start_time
-            live.update(f"[bold cyan][*] Wysyłanie zapytania przez sesję Pro... [yellow]({elapsed:.1f}s)[/yellow][/bold cyan]")
-            await asyncio.sleep(0.25)
-
-    elapsed = time.time() - start_time
-    if success:
-        console.print(f"[bold green][ok] Odpowiedź odebrana w {elapsed:.2f} s[/bold green]")
-        if response_text:
-            console.print("\n[bold cyan]Gemini >[/bold cyan]")
-            console.print(Markdown(response_text))
-
-            parsed_files = parse_multi_file_code(response_text)
-            if parsed_files:
-                console.print(f"\n[bold yellow][*] Wykryto {len(parsed_files)} plik(i) do automatycznego zapisu:[/bold yellow]")
-                apply_file_changes(parsed_files)
-                console.print("[bold green][ok] Pliki wdrożone w projekcie.[/bold green]")
-                
-                is_ok, auto_fix_prompt = await git_sync_and_monitor(client)
-                if not is_ok and auto_fix_prompt:
-                    await send_prompt_with_spinner(client, auto_fix_prompt)
-    else:
-        if task.exception():
-            console.print(f"[bold red][!] Błąd zapytania po {elapsed:.1f}s: {task.exception()}[/bold red]")
+        console.print(f"[bold red][!] Błąd podczas synchronizacji z GitHubem: {e}[/bold red]")
 
 async def main():
     ensure_valid_cwd()
     
     console.clear()
     console.print(Panel.fit(
-        "[bold green]Asystent Techniczny - Tryb Pro (Auto-Monitoring CI/CD + Fast Chat)[/bold green]\n"
+        "[bold green]Asystent Techniczny - Tryb Pro (PAPISID + Git Sync)[/bold green]\n"
         f"Katalog roboczy: [cyan]{PROJECT_DIR}[/cyan]",
         border_style="green"
     ))
@@ -266,6 +177,7 @@ async def main():
     try:
         client = GeminiClient(secure_1psid=PAPISID, secure_1psidts=PSIDTS)
         await client.init()
+        chat = client.start_chat()
         console.print("[bold green][ok] Połączenie z kontem Pro ustanowione.[/bold green]")
     except Exception as e:
         console.print(f"[bold red][!] Błąd inicjalizacji: {e}[/bold red]")
@@ -285,7 +197,44 @@ async def main():
             dynamic_context = build_dynamic_project_context()
             full_prompt = f"{dynamic_context}\n\nZADANIE UŻYTKOWNIKA:\n{user_input}"
 
-            await send_prompt_with_spinner(client, full_prompt)
+            response_text = ""
+            success = False
+            start_time = time.time()
+
+            # Pętla z licznikiem czasu na żywo w kolorze
+            async def send_task():
+                nonlocal response_text, success
+                response = await chat.send_message(full_prompt)
+                response_text = response.text if hasattr(response, "text") else str(response)
+                success = True
+
+            task = asyncio.create_task(send_task())
+
+            with Live(console=console, refresh_per_second=4) as live:
+                while not task.done():
+                    elapsed = time.time() - start_time
+                    live.update(f"[bold cyan][*] Wysyłanie zapytania przez sesję Pro... [yellow]({elapsed:.1f}s)[/yellow][/bold cyan]")
+                    await asyncio.sleep(0.25)
+
+            elapsed = time.time() - start_time
+            if success:
+                console.print(f"[bold green][ok] Odpowiedź odebrana w {elapsed:.2f} s[/bold green]")
+            else:
+                if task.exception():
+                    console.print(f"[bold red][!] Błąd zapytania po {elapsed:.1f}s: {task.exception()}[/bold red]")
+                continue
+
+            if response_text:
+                console.print("\n[bold cyan]Gemini >[/bold cyan]")
+                console.print(Markdown(response_text))
+
+                parsed_files = parse_multi_file_code(response_text)
+                if parsed_files:
+                    console.print(f"\n[bold yellow][*] Wykryto {len(parsed_files)} plik(i) do automatycznego zapisu:[/bold yellow]")
+                    apply_file_changes(parsed_files)
+                    console.print("[bold green][ok] Pliki wdrożone w projekcie.[/bold green]")
+                    
+                    git_sync_and_check()
 
         except KeyboardInterrupt:
             console.print("\n[bold yellow][*] Zatrzymano przez użytkownika.[/bold yellow]")
