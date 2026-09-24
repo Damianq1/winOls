@@ -1,24 +1,27 @@
 package com.winols.app.data
 
 import com.winols.app.model.DataType
+import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.InputStream
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
  * Zaawansowany menedżer bufora binarnego ECU.
- * Wykorzystuje java.nio.ByteBuffer zoptymalizowany pod kątem pracy z plikami o rozmiarach 512 KB - 8 MB+.
- * Zapewnia bezpośredni bufor pamięci, wsparcie dla kopii oryginalnej (ORI vs MOD),
- * blokowe operacje I/O oraz lokalną pamięć podręczną (cache) dla przyspieszonego renderowania tabel/wykresów.
+ * Obsługuje bezpośrednie bufory pamięci (ByteBuffer.allocateDirect) dla plików binarnych (.bin)
+ * oraz import/eksport rekordów Intel HEX (.hex).
  */
 class BinaryBufferManager(initialCapacity: Int = 0) {
 
     private var directBuffer: ByteBuffer = ByteBuffer.allocateDirect(initialCapacity.coerceAtLeast(0))
     private var originalBackup: ByteBuffer = ByteBuffer.allocateDirect(initialCapacity.coerceAtLeast(0))
 
-    // Pamięć podręczna dla zdekodowanych wartości inżynierskich / surowych (LRU block cache)
+    private val hexCodec = IntelHexCodec()
     private val valueCache = HashMap<Long, Double>(1024)
+
+    var fileBaseAddress: Long = 0L
+        private set
 
     val size: Int
         get() = directBuffer.capacity()
@@ -34,27 +37,38 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
 
     @Synchronized
     fun loadFromFile(file: File) {
-        val fileLength = file.length().toInt()
-        reallocateIfNeeded(fileLength)
+        val nameLower = file.name.lowercase()
+        if (nameLower.endsWith(".hex") || nameLower.endsWith(".ihex")) {
+            file.inputStream().use { loadFromHexStream(it) }
+        } else {
+            val fileLength = file.length().toInt()
+            reallocateIfNeeded(fileLength)
 
-        RandomAccessFile(file, "r").use { raf ->
-            val channel = raf.channel
-            directBuffer.clear()
-            channel.read(directBuffer)
-            directBuffer.flip()
+            RandomAccessFile(file, "r").use { raf ->
+                val channel = raf.channel
+                directBuffer.clear()
+                channel.read(directBuffer)
+                directBuffer.flip()
 
-            // Kopia do bufora ORI
-            originalBackup.clear()
-            val dup = directBuffer.duplicate()
-            dup.position(0)
-            originalBackup.put(dup)
-            originalBackup.flip()
+                originalBackup.clear()
+                val dup = directBuffer.duplicate()
+                dup.position(0)
+                originalBackup.put(dup)
+                originalBackup.flip()
+            }
+            fileBaseAddress = 0L
+            invalidateCache()
         }
-        invalidateCache()
     }
 
     @Synchronized
     fun loadFromBytes(bytes: ByteArray) {
+        // Autodetekcja: czy to plik Intel HEX przekazany jako bajty
+        if (bytes.size > 11 && bytes[0].toInt().toChar() == ':') {
+            loadFromHexStream(ByteArrayInputStream(bytes))
+            return
+        }
+
         reallocateIfNeeded(bytes.size)
 
         directBuffer.clear()
@@ -63,6 +77,25 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
 
         originalBackup.clear()
         originalBackup.put(bytes)
+        originalBackup.flip()
+
+        fileBaseAddress = 0L
+        invalidateCache()
+    }
+
+    @Synchronized
+    fun loadFromHexStream(stream: InputStream) {
+        val parsed = hexCodec.decodeHex(stream)
+        fileBaseAddress = parsed.baseAddress
+
+        reallocateIfNeeded(parsed.binaryData.size)
+
+        directBuffer.clear()
+        directBuffer.put(parsed.binaryData)
+        directBuffer.flip()
+
+        originalBackup.clear()
+        originalBackup.put(parsed.binaryData)
         originalBackup.flip()
 
         invalidateCache()
@@ -79,17 +112,13 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         valueCache.clear()
     }
 
-    /**
-     * Odczytuje wartość ze wskazanego adresu fizycznego z uwzględnieniem pamięci podręcznej.
-     */
     fun readValue(address: Long, type: DataType): Double {
-        val cacheKey = (address shl 8) or type.ordinal.toLong()
+        val relAddr = address - fileBaseAddress
+        val cacheKey = (relAddr shl 8) or type.ordinal.toLong()
         val cached = valueCache[cacheKey]
-        if (cached != null) {
-            return cached
-        }
+        if (cached != null) return cached
 
-        val idx = address.toInt()
+        val idx = relAddr.toInt()
         if (idx < 0 || idx + type.byteSize > directBuffer.capacity()) {
             return 0.0
         }
@@ -153,12 +182,10 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
         return result
     }
 
-    /**
-     * Zapisuje nową wartość binarną oraz unieważnia powiązany wpis w cache.
-     */
     @Synchronized
     fun writeValue(address: Long, type: DataType, rawValue: Double) {
-        val idx = address.toInt()
+        val relAddr = address - fileBaseAddress
+        val idx = relAddr.toInt()
         if (idx < 0 || idx + type.byteSize > directBuffer.capacity()) return
 
         when (type) {
@@ -191,37 +218,41 @@ class BinaryBufferManager(initialCapacity: Int = 0) {
             }
         }
 
-        val cacheKey = (address shl 8) or type.ordinal.toLong()
+        val cacheKey = (relAddr shl 8) or type.ordinal.toLong()
         valueCache.remove(cacheKey)
     }
 
-    /**
-     * Zwraca listę zmodyfikowanych adresów (weryfikacja różnic ORI vs MOD z buforem 64-bit Word).
-     */
     fun getDifferences(): List<Long> {
         val diffList = mutableListOf<Long>()
         val cap = directBuffer.capacity()
         for (i in 0 until cap) {
             if (directBuffer.get(i) != originalBackup.get(i)) {
-                diffList.add(i.toLong())
+                diffList.add(fileBaseAddress + i)
             }
         }
         return diffList
     }
 
     fun isModifiedAt(address: Long): Boolean {
-        val idx = address.toInt()
+        val relAddr = address - fileBaseAddress
+        val idx = relAddr.toInt()
         if (idx < 0 || idx >= directBuffer.capacity()) return false
         return directBuffer.get(idx) != originalBackup.get(idx)
     }
 
     @Synchronized
     fun saveToFile(destination: File) {
-        RandomAccessFile(destination, "rw").use { raf ->
-            val channel = raf.channel
-            val dup = directBuffer.duplicate()
-            dup.position(0)
-            channel.write(dup)
+        val nameLower = destination.name.lowercase()
+        if (nameLower.endsWith(".hex") || nameLower.endsWith(".ihex")) {
+            val hexContent = hexCodec.encodeToHex(rawBuffer, fileBaseAddress)
+            destination.writeText(hexContent, Charsets.US_ASCII)
+        } else {
+            RandomAccessFile(destination, "rw").use { raf ->
+                val channel = raf.channel
+                val dup = directBuffer.duplicate()
+                dup.position(0)
+                channel.write(dup)
+            }
         }
     }
 }

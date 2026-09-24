@@ -7,24 +7,26 @@ import java.io.InputStream
 import java.io.OutputStream
 
 /**
- * Asynchroniczne operacje wejścia/wyjścia (I/O) gwarantujące
- * brak obciążenia i blokowania głównego wątku UI.
+ * Zapewnia w pełni asynchroniczną i nieblokującą obsługę plików binarnych (.bin/.hex).
  */
 class AsyncBinaryOperations(private val bufferManager: BinaryBufferManager) {
 
     suspend fun loadFileAsync(file: File): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            val bytes = file.readBytes()
-            bufferManager.loadFromBytes(bytes)
-            bytes.size
+            bufferManager.loadFromFile(file)
+            bufferManager.size
         }
     }
 
-    suspend fun loadStreamAsync(stream: InputStream): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun loadStreamAsync(stream: InputStream, isHexFormat: Boolean = false): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            val bytes = stream.use { it.readBytes() }
-            bufferManager.loadFromBytes(bytes)
-            bytes.size
+            if (isHexFormat) {
+                bufferManager.loadFromHexStream(stream)
+            } else {
+                val bytes = stream.use { it.readBytes() }
+                bufferManager.loadFromBytes(bytes)
+            }
+            bufferManager.size
         }
     }
 
@@ -38,6 +40,10 @@ class AsyncBinaryOperations(private val bufferManager: BinaryBufferManager) {
         runCatching {
             outputStream.use { it.write(bufferManager.rawBuffer) }
         }
+    }
+
+    suspend fun exportHexAsync(startAddress: Long = bufferManager.fileBaseAddress): String = withContext(Dispatchers.Default) {
+        IntelHexCodec().encodeToHex(bufferManager.rawBuffer, startAddress)
     }
 
     suspend fun calculateDifferencesAsync(): List<Long> = withContext(Dispatchers.Default) {
