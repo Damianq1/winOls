@@ -2,33 +2,41 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="#121212">
+    android:background="#121212"
+    android:orientation="vertical">
 
     <HorizontalScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="8dp"
-        android:background="#1E1E1E">
+        android:background="#1E1E1E"
+        android:padding="8dp">
 
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <Button
                 android:id="@+id/btnLoadBin"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Otwórz BIN"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="6dp"
+                android:text="Otwórz BIN" />
 
             <Button
                 android:id="@+id/btnSelectMap"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Wybierz Mapę"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="6dp"
+                android:text="Wybierz Mapę" />
+
+            <Button
+                android:id="@+id/btnToggleViewMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:text="Tryb: Tabela" />
 
             <Button
                 android:id="@+id/btnModifyCell"
@@ -38,9 +46,28 @@
         </LinearLayout>
     </HorizontalScrollView>
 
-    <com.winols.app.ui.EcuGridView
-        android:id="@+id/ecuGridView"
+    <FrameLayout
+        android:id="@+id/viewContainer"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent">
+
+        <com.winols.app.ui.EcuGridView
+            android:id="@+id/ecuGridView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="visible" />
+
+        <com.winols.app.ui.EcuCurve2DView
+            android:id="@+id/ecuCurve2DView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <com.winols.app.ui.EcuSurface3DView
+            android:id="@+id/ecuSurface3DView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+    </FrameLayout>
 
 </LinearLayout>

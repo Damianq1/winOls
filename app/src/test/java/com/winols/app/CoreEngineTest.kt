@@ -1,95 +1,131 @@
 package com.winols.app
 
-import com.winols.app.engine.ChecksumAlgorithm
-import com.winols.app.engine.ChecksumBlock
+import com.winols.app.data.BinaryBufferManager
+import com.winols.app.edit.MapEditor
 import com.winols.app.engine.ChecksumEngine
-import com.winols.app.export.ExcelExporter
-import com.winols.app.export.ExportOptions
-import com.winols.app.model.DataRepresentation
+import com.winols.app.engine.ChecksumFamily
+import com.winols.app.model.AxisDefinition
+import com.winols.app.model.DataType
 import com.winols.app.model.MapDefinition
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
-import java.io.ByteArrayOutputStream
-import java.nio.ByteBuffer
-import java.util.zip.ZipInputStream
 
 class CoreEngineTest {
 
-    @Test
-    fun testChecksumAdd8CalculationAndCorrection() {
-        val engine = ChecksumEngine()
-        val buffer = ByteBuffer.allocate(16)
-        
-        // Dane testowe: 0x01, 0x02, 0x03, 0x04
-        buffer.put(0, 0x01.toByte())
-        buffer.put(1, 0x02.toByte())
-        buffer.put(2, 0x03.toByte())
-        buffer.put(3, 0x04.toByte())
-        // Adres 4 przeznaczony na zapisaną sumę
+    private lateinit var bufferManager: BinaryBufferManager
+    private lateinit var binModel: BinModel
+    private lateinit var mapEditor: MapEditor
+    private lateinit var checksumEngine: ChecksumEngine
 
-        val block = ChecksumBlock(
-            id = "B1",
-            name = "Test Block 8-bit",
-            startAddress = 0,
-            endAddress = 3,
-            storedChecksumAddress = 4,
-            algorithm = ChecksumAlgorithm.ADD8
-        )
-
-        // 1 + 2 + 3 + 4 = 10 (0x0A)
-        val initialVerify = engine.verifyBlock(buffer, block)
-        assertEquals(10L, initialVerify.calculatedChecksum)
-        assertEquals(false, initialVerify.isValid) // pod adresem 4 jest 0x00
-
-        // Zastosowanie poprawki
-        val success = engine.applyCorrection(buffer, block)
-        assertTrue(success)
-
-        val updatedVerify = engine.verifyBlock(buffer, block)
-        assertEquals(10L, updatedVerify.storedChecksum)
-        assertTrue(updatedVerify.isValid)
+    @Before
+    fun setUp() {
+        bufferManager = BinaryBufferManager(1024)
+        binModel = BinModel(bufferManager)
+        mapEditor = MapEditor(binModel)
+        checksumEngine = ChecksumEngine()
     }
 
     @Test
-    fun testExcelExporterGeneratesValidXlsxZipStructure() {
-        val exporter = ExcelExporter(ExportOptions())
-        val buffer = ByteBuffer.allocate(64)
-        for (i in 0 until 16) {
-            buffer.put(i, (i * 10).toByte())
-        }
+    fun testBufferReadWriteWordLE() {
+        val testAddr = 0x100L
+        bufferManager.writeValue(testAddr, DataType.UWORD_LE, 12500.0)
+        val readVal = bufferManager.readValue(testAddr, DataType.UWORD_LE)
+        assertEquals(12500.0, readVal, 0.001)
+    }
 
+    @Test
+    fun testMapEngineeringValueConversion() {
         val map = MapDefinition(
-            id = "MAP_1",
-            name = "DriversWish",
-            address = 0,
+            id = "TURBO_PRESSURE",
+            name = "Turbo Target Pressure",
+            startAddress = 0x200L,
             rows = 4,
-            cols = 4,
-            cellType = DataRepresentation.UINT8,
-            factor = 1.0,
-            offset = 0.0,
-            unit = "Nm",
-            xAxis = doubleArrayOf(1000.0, 2000.0, 3000.0, 4000.0),
-            yAxis = doubleArrayOf(0.0, 25.0, 50.0, 100.0)
+            columns = 4,
+            dataType = DataType.UWORD_LE,
+            factor = 0.05,
+            offset = 100.0,
+            unit = "mbar",
+            xAxis = AxisDefinition("RPM", length = 4),
+            yAxis = AxisDefinition("Load", length = 4)
         )
 
-        val out = ByteArrayOutputStream()
-        exporter.exportMapsToXlsx(buffer, listOf(map), out)
-        val bytes = out.toByteArray()
+        // Ustawienie wartości inżynierskiej: 1100.0 mbar
+        // raw = (1100.0 - 100.0) / 0.05 = 20000
+        binModel.setCellValue(map, 0, 0, 1100.0)
 
-        assertTrue(bytes.isNotEmpty())
+        val retrievedVal = binModel.getCellValue(map, 0, 0)
+        assertEquals(1100.0, retrievedVal, 0.001)
 
-        // Weryfikacja struktury ZIP OpenXML
-        val zipIn = ZipInputStream(bytes.inputStream())
-        val entries = mutableListOf<String>()
-        var entry = zipIn.nextEntry
-        while (entry != null) {
-            entries.add(entry.name)
-            entry = zipIn.nextEntry
+        val rawRead = bufferManager.readValue(0x200L, DataType.UWORD_LE)
+        assertEquals(20000.0, rawRead, 0.001)
+    }
+
+    @Test
+    fun testChecksumCalculationAndPatch16Bit() {
+        val buffer = ByteArray(512)
+        // Wypełnienie bufora przykładowymi danymi
+        for (i in 0 until 500) {
+            buffer[i] = (i and 0xFF).toByte()
         }
 
-        assertTrue(entries.contains("[Content_Types].xml"))
-        assertTrue(entries.contains("xl/workbook.xml"))
-        assertTrue(entries.contains("xl/worksheets/sheet1.xml"))
+        val start = 0
+        val end = 500
+        val checksumLoc = 502
+
+        val initialVerify = checksumEngine.verifyBlock(
+            buffer,
+            start,
+            end,
+            checksumLoc,
+            ChecksumFamily.GENERIC_SUM_16_LE
+        )
+        assertFalse(initialVerify.isValid)
+
+        val patched = checksumEngine.patchChecksum(
+            buffer,
+            start,
+            end,
+            checksumLoc,
+            ChecksumFamily.GENERIC_SUM_16_LE
+        )
+        assertTrue(patched)
+
+        val verified = checksumEngine.verifyBlock(
+            buffer,
+            start,
+            end,
+            checksumLoc,
+            ChecksumFamily.GENERIC_SUM_16_LE
+        )
+        assertTrue(verified.isValid)
+        assertEquals(verified.calculatedChecksum, verified.storedChecksum)
+    }
+
+    @Test
+    fun testMapEditorInterpolation() {
+        val map = MapDefinition(
+            id = "SPARK_ADVANCE",
+            name = "Base Ignition",
+            startAddress = 0x50L,
+            rows = 3,
+            columns = 3,
+            dataType = DataType.UWORD_LE,
+            factor = 1.0,
+            offset = 0.0
+        )
+
+        binModel.setCellValue(map, 0, 0, 10.0)
+        binModel.setCellValue(map, 0, 2, 20.0)
+        binModel.setCellValue(map, 2, 0, 30.0)
+        binModel.setCellValue(map, 2, 2, 40.0)
+
+        mapEditor.interpolate2D(map, 0, 0, 2, 2)
+
+        val centerValue = binModel.getCellValue(map, 1, 1)
+        // Środek płaszczyzny interpolowanej liniowo powinien wynosić 25.0
+        assertEquals(25.0, centerValue, 0.5)
     }
 }

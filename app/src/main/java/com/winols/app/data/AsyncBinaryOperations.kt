@@ -1,22 +1,42 @@
 package com.winols.app.data
 
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 
-class AsyncBinaryOperations(
-    private val dispatcher: CoroutineDispatcher = Dispatchers.IO
-) {
-    suspend fun loadFile(file: File): Result<BinaryBufferManager> = withContext(dispatcher) {
+/**
+ * Zapewnia asynchroniczne i bezpieczne dla wątku operacje wejścia/wyjścia
+ * na plikach binarnych Flash / EEPROM.
+ */
+class AsyncBinaryOperations(private val bufferManager: BinaryBufferManager) {
+
+    suspend fun loadFileAsync(file: File): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            BinaryBufferManager.fromFile(file)
+            val bytes = file.readBytes()
+            bufferManager.loadFromBytes(bytes)
+            bytes.size
         }
     }
 
-    suspend fun saveFile(bufferManager: BinaryBufferManager, file: File): Result<Unit> = withContext(dispatcher) {
+    suspend fun loadStreamAsync(stream: InputStream): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            bufferManager.writeToFile(file)
+            val bytes = stream.use { it.readBytes() }
+            bufferManager.loadFromBytes(bytes)
+            bytes.size
+        }
+    }
+
+    suspend fun saveToFileAsync(destination: File): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            bufferManager.saveToFile(destination)
+        }
+    }
+
+    suspend fun saveToStreamAsync(outputStream: OutputStream): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            outputStream.use { it.write(bufferManager.rawBuffer) }
         }
     }
 }
