@@ -1,35 +1,40 @@
 package com.winols.app
 
 import android.os.Bundle
-import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
 import com.winols.app.databinding.ActivityMainBinding
-import com.winols.app.presentation.mvi.EditorIntent
-import com.winols.app.presentation.viewmodel.EcuEditorViewModel
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private val viewModel: EcuEditorViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        setupObservers()
-    }
+        // Mock danych ECU: mapa wtrysku 16x16
+        val ecuMatrix = Array(16) { r ->
+            IntArray(16) { c -> (r * 150 + c * 50) % 2500 }
+        }
 
-    private fun setupObservers() {
-        lifecycleScope.launch {
-            viewModel.state.collectLatest { state ->
-                binding.tvBinaryTitle.text = state.binaryFile?.let { 
-                    "${it.fileName} (${it.size / 1024} KB)" 
-                } ?: "Brak załadowanego pliku"
-            }
+        binding.ecuTableView.setMapData(ecuMatrix)
+
+        // Obsługa selekcji komórki i synchronizacja z widokiem wykresu 2D
+        binding.ecuTableView.onCellSelectedListener = { row, col, value ->
+            binding.tvSelectedCell.text = "Komórka: [$row, $col] = $value"
+            
+            // Wizualizacja wybranego rzędu jako profilu krzywej 2D
+            val rowFloats = FloatArray(ecuMatrix[row].size) { i -> ecuMatrix[row][i].toFloat() }
+            binding.ecuChartView.setData(rowFloats, minVal = 0f, maxVal = 3000f)
+        }
+
+        binding.btnInc.setOnClickListener {
+            binding.ecuTableView.updateSelectedCellValue(10)
+        }
+
+        binding.btnDec.setOnClickListener {
+            binding.ecuTableView.updateSelectedCellValue(-10)
         }
     }
 }
