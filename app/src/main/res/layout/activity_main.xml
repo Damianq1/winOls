@@ -1,113 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<androidx.constraintlayout.widget.ConstraintLayout 
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#121212">
 
-    <!-- Pasek akcji masowej edycji -->
-    <HorizontalScrollView
-        android:id="@+id/toolbarScrollView"
-        android:layout_width="0dp"
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/viewModeToggle"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:background="#1E1E1E"
-        android:padding="6dp"
+        android:layout_margin="16dp"
+        app:singleSelection="true"
+        app:checkedButton="@id/btnMode2D"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        app:layout_constraintStart_toStartOf="parent">
 
-        <LinearLayout
+        <Button
+            android:id="@+id/btnMode2D"
+            style="?attr/materialButtonOutlinedStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:text="2D Podgląd" />
 
-            <Button
-                android:id="@+id/btnOffset"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="+/- Wartość"
-                android:textSize="12sp"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:textColor="#FFFFFF" />
+        <Button
+            android:id="@+id/btnMode3D"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="3D Wykres" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
 
-            <Button
-                android:id="@+id/btnPercent"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:text="Procent (%)"
-                android:textSize="12sp"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:textColor="#FFFFFF" />
-
-            <Button
-                android:id="@+id/btnSetValue"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:text="Wklej stałą"
-                android:textSize="12sp"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:textColor="#FFFFFF" />
-
-            <Button
-                android:id="@+id/btnSmooth"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:text="Wygładź"
-                android:textSize="12sp"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:textColor="#FFFFFF" />
-
-            <Button
-                android:id="@+id/btnSelectAll"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
-                android:text="Zaznacz całą"
-                android:textSize="12sp"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
-                android:textColor="#03DAC6" />
-        </LinearLayout>
-    </HorizontalScrollView>
-
-    <!-- Pasek stanu selekcji -->
-    <TextView
-        android:id="@+id/tvSelectionStatus"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="4dp"
-        android:background="#252525"
-        android:textColor="#AAAAAA"
-        android:textSize="11sp"
-        android:text="Brak zaznaczenia"
-        app:layout_constraintTop_toBottomOf="@id/toolbarScrollView"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <!-- Przewijalny obszar siatki mapy -->
-    <ScrollView
+    <FrameLayout
+        android:id="@+id/viewportContainer"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:fillViewport="true"
-        app:layout_constraintTop_toBottomOf="@id/tvSelectionStatus"
+        android:layout_margin="16dp"
+        app:layout_constraintTop_toBottomOf="@id/viewModeToggle"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <HorizontalScrollView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content">
+        <com.winols.app.ui.views.Map2DView
+            android:id="@+id/map2DView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="visible" />
 
-            <com.winols.app.ui.view.TableMapView
-                android:id="@+id/tableMapView"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content" />
-        </HorizontalScrollView>
-    </ScrollView>
+        <com.winols.app.ui.views.Map3DView
+            android:id="@+id/map3DView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

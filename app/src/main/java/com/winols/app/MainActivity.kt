@@ -1,139 +1,61 @@
 package com.winols.app
 
 import android.os.Bundle
-import android.text.InputType
-import android.widget.EditText
-import androidx.appcompat.app.AlertDialog
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import com.winols.app.databinding.ActivityMainBinding
-import com.winols.app.domain.model.MapTable
-import com.winols.app.domain.model.SelectionArea
+import com.winols.app.model.EcuMapData
+import kotlin.math.sin
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var mapTable: MapTable
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        initSampleMap()
-        setupListeners()
-    }
+        val sampleMap = generateSampleEcuMap()
 
-    private fun initSampleMap() {
-        val rows = 16
-        val cols = 16
-        val initialData = IntArray(rows * cols) { idx ->
-            val r = idx / cols
-            val c = idx % cols
-            // Przykładowa bazowa płaszczyzna momentu / dawki paliwa
-            (800 + r * 150 + c * 80).coerceAtMost(0xFFFF)
-        }
+        binding.map2DView.setMapData(sampleMap)
+        binding.map3DView.setMapData(sampleMap)
 
-        mapTable = MapTable(rows, cols, initialData, is16Bit = true, isSigned = false)
-        binding.tableMapView.mapTable = mapTable
-    }
-
-    private fun setupListeners() {
-        binding.tableMapView.onSelectionChanged = { selection ->
-            updateActionButtonsState(selection)
-            updateSelectionStatus(selection)
-        }
-
-        binding.btnSelectAll.setOnClickListener {
-            binding.tableMapView.selectAll()
-        }
-
-        binding.btnOffset.setOnClickListener {
-            val sel = binding.tableMapView.selection ?: return@setOnClickListener
-            showNumericDialog(
-                title = "Dodaj/Odejmij wartość",
-                hint = "np. 50 lub -100",
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_SIGNED
-            ) { input ->
-                val delta = input.toIntOrNull() ?: return@showNumericDialog
-                mapTable.applyOffset(sel, delta)
-                binding.tableMapView.invalidate()
-            }
-        }
-
-        binding.btnPercent.setOnClickListener {
-            val sel = binding.tableMapView.selection ?: return@setOnClickListener
-            showNumericDialog(
-                title = "Zmiana procentowa",
-                hint = "np. 5.5 lub -10.0",
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
-            ) { input ->
-                val pct = input.toDoubleOrNull() ?: return@showNumericDialog
-                mapTable.applyPercentage(sel, pct)
-                binding.tableMapView.invalidate()
-            }
-        }
-
-        binding.btnSetValue.setOnClickListener {
-            val sel = binding.tableMapView.selection ?: return@setOnClickListener
-            showNumericDialog(
-                title = "Wklej stałą wartość",
-                hint = "np. 2000",
-                inputType = InputType.TYPE_CLASS_NUMBER
-            ) { input ->
-                val value = input.toIntOrNull() ?: return@showNumericDialog
-                mapTable.setValue(sel, value)
-                binding.tableMapView.invalidate()
-            }
-        }
-
-        binding.btnSmooth.setOnClickListener {
-            val sel = binding.tableMapView.selection ?: return@setOnClickListener
-            mapTable.applySmoothing(sel)
-            binding.tableMapView.invalidate()
-        }
-
-        updateActionButtonsState(null)
-    }
-
-    private fun updateActionButtonsState(selection: SelectionArea?) {
-        val hasSelection = selection != null
-        binding.btnOffset.isEnabled = hasSelection
-        binding.btnPercent.isEnabled = hasSelection
-        binding.btnSetValue.isEnabled = hasSelection
-        binding.btnSmooth.isEnabled = hasSelection
-    }
-
-    private fun updateSelectionStatus(selection: SelectionArea?) {
-        if (selection == null) {
-            binding.tvSelectionStatus.text = "Brak zaznaczenia"
-        } else {
-            val count = (selection.maxRow - selection.minRow + 1) * (selection.maxCol - selection.minCol + 1)
-            binding.tvSelectionStatus.text =
-                "Zaznaczenie: R[${selection.minRow}..${selection.maxRow}], C[${selection.minCol}..${selection.maxCol}] ($count komórek)"
-        }
-    }
-
-    private fun showNumericDialog(
-        title: String,
-        hint: String,
-        inputType: Int,
-        onConfirmed: (String) -> Unit
-    ) {
-        val input = EditText(this).apply {
-            this.inputType = inputType
-            this.hint = hint
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setView(input)
-            .setPositiveButton("Zastosuj") { _, _ ->
-                val text = input.text.toString().trim()
-                if (text.isNotEmpty()) {
-                    onConfirmed(text)
+        binding.viewModeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) {
+                when (checkedId) {
+                    R.id.btnMode2D -> {
+                        binding.map2DView.visibility = View.VISIBLE
+                        binding.map3DView.visibility = View.GONE
+                    }
+                    R.id.btnMode3D -> {
+                        binding.map2DView.visibility = View.GONE
+                        binding.map3DView.visibility = View.VISIBLE
+                    }
                 }
             }
-            .setNegativeButton("Anuluj", null)
-            .show()
+        }
+    }
+
+    private fun generateSampleEcuMap(): EcuMapData {
+        val rows = 16
+        val cols = 16
+        val data = FloatArray(rows * cols)
+
+        // Generowanie przykładowej charakterystyki turbodoładowania / zapłonu
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val x = c / (cols - 1.0) * Math.PI
+                val y = r / (rows - 1.0) * Math.PI
+                data[r * cols + c] = ((sin(x) * sin(y)) * 250.0 + 50.0).toFloat()
+            }
+        }
+
+        return EcuMapData(
+            name = "Turbo Boost Target (16x16)",
+            rows = rows,
+            cols = cols,
+            data = data
+        )
     }
 }
