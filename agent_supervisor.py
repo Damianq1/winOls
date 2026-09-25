@@ -42,11 +42,8 @@ def load_env_vars():
     return env_dict
 
 def get_project_snapshot(max_depth=3):
-    """Generuje strukturę katalogu (tree) oraz podczytuje kluczowe pliki projektu dla Gemini."""
     ensure_valid_cwd()
     snapshot = "### STRUKTURA PROJEKTU (TREE):\n"
-    
-    # Generowanie struktury tree w Pythonie
     ignore_dirs = {".git", ".gradle", "build", ".idea", "__pycache__"}
     tree_lines = []
     for root, dirs, files in os.walk(str(PROJECT_PATH)):
@@ -62,8 +59,6 @@ def get_project_snapshot(max_depth=3):
                     tree_lines.append(f"{indent}    📄 {file}")
     
     snapshot += "\n".join(tree_lines[:100]) + "\n\n"
-    
-    # Podgląd kluczowych plików konfiguracyjnych i źródłowych
     snapshot += "### ZAWARTOŚĆ KLUCZOWYCH PLIKÓW:\n"
     key_files = ["build.gradle", "settings.gradle", "app/build.gradle", "app/src/main/AndroidManifest.xml"]
     
@@ -72,7 +67,6 @@ def get_project_snapshot(max_depth=3):
         if f_path.exists():
             try:
                 content = f_path.read_text(encoding="utf-8", errors="ignore")
-                # Ograniczenie długości pojedynczego pliku do 3000 znaków, żeby nie przepalić limitu
                 if len(content) > 3000:
                     content = content[:3000] + "\n... [przycięto plik]"
                 snapshot += f"\n--- PLIK: {kf} ---\n{content}\n"
@@ -99,7 +93,6 @@ def apply_changes(response_text):
             console.print(f"[bold green][+] Zaktualizowano plik: {path_str}[/bold green]")
             updated_files.append(path_str)
             
-    # Autonomiczne sprzątanie zbędnych plików workflow
     workflows_dir = PROJECT_PATH / ".github" / "workflows"
     if workflows_dir.exists():
         allowed_workflow = "android.yml"
@@ -249,7 +242,7 @@ async def monitor_and_auto_fix(connector, max_attempts=3, check_interval_sec=120
 
         console.print("[cyan][*] Wysyłanie zapytania naprawczego z pełnym kontekstem projektu do Gemini...[/cyan]")
         try:
-            response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=200), timeout=220)
+            response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=280), timeout=300)
             if response_text:
                 console.print(Markdown(response_text))
                 updated = apply_changes(response_text)
@@ -277,7 +270,7 @@ def run_git_status():
 async def main():
     ensure_valid_cwd()
     console.clear()
-    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (Autonomous + Snapshot Mode)[/bold green]"))
+    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (Fixed Multiline & Extended Timeout)[/bold green]"))
 
     env = load_env_vars()
     psid = env.get("__Secure-1PSID", "")
@@ -298,8 +291,8 @@ async def main():
         return
 
     console.print("[bold cyan]Dostępne komendy:[/bold cyan]")
-    console.print("  [bold green]/prompt <treść>[/bold green]       - Wyślij zapytanie wraz z automatycznym snapshotem folderu")
-    console.print("  [bold green]/napraw[/bold green]              - Pobierz logi, dołącz snapshot, napraw i monitoruj")
+    console.print("  [bold green]/prompt <treść>[/bold green]       - Wyślij zapytanie wraz z snapshotem folderu")
+    console.print("  [bold green]/napraw [opcjonalnie][/bold green]  - Pobierz logi, dołącz snapshot, napraw i monitoruj")
     console.print("  [bold green]/git[/bold green]                 - Sprawdź status git")
     console.print("  [bold green]/pull[/bold green]                - Pobierz zmiany z GitHub")
     console.print("  [bold green]/exit[/bold green]                - Wyjście\n")
@@ -313,9 +306,19 @@ async def main():
         if not cmd_input:
             continue
 
-        parts = cmd_input.split(" ", 1)
-        action = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
+        # Obsługa wielolinijkowego /prompt: jeśli użytkownik wkleił blok tekstowy zaczynający się od /prompt, bierzemy wszystko.
+        # Jeśli nie wpisał /prompt na początku, ale wkleił długi tekst bez "/" na początku, traktujemy to automatycznie jako /prompt!
+        if cmd_input.startswith("/prompt "):
+            action = "/prompt"
+            arg = cmd_input[8:].strip()
+        elif cmd_input.startswith("/"):
+            parts = cmd_input.split(" ", 1)
+            action = parts[0].lower()
+            arg = parts[1] if len(parts) > 1 else ""
+        else:
+            # Automatyczne przekierowanie wklejonego tekstu bez komendy jako /prompt
+            action = "/prompt"
+            arg = cmd_input
 
         if action in {"exit", "quit", "q"}:
             break
@@ -342,9 +345,9 @@ async def main():
                 f"Przeanalizuj pliki, dokonaj poprawek i zwróć je w formacie:\n### ścieżka/do/pliku\n```kotlin\n// kod\n```"
             )
 
-            console.print("[cyan][*] Skanowanie projektu i wysyłanie zapytania do Gemini z pełnym kontekstem...[/cyan]")
+            console.print("[cyan][*] Skanowanie projektu i wysyłanie zapytania do Gemini (timeout do 300s)...[/cyan]")
             try:
-                response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=200), timeout=220)
+                response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=280), timeout=300)
                 if response_text:
                     console.print(Markdown(response_text))
                     updated = apply_changes(response_text)
@@ -357,7 +360,7 @@ async def main():
                 else:
                     console.print("[yellow][!] Otrzymano pustą odpowiedź.[/yellow]")
             except TimeoutError:
-                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini.[/yellow]")
+                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini (300s).[/yellow]")
             except Exception as e:
                 console.print(f"[red][!] Błąd komunikacji: {e}[/red]")
 
@@ -375,18 +378,18 @@ async def main():
                 f"Jeśli modyfikujesz pliki, zwróć je w formacie:\n### ścieżka/do/pliku\n```kotlin lub yaml\n// kod\n```"
             )
 
-            console.print("[cyan][*] Skanowanie folderu (tree + zawartość) i wysyłanie do Gemini...[/cyan]")
+            console.print("[cyan][*] Skanowanie folderu i wysyłanie do Gemini z pełnym kontekstem (timeout do 300s)...[/cyan]")
             try:
-                response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=200), timeout=220)
+                response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=280), timeout=300)
                 if response_text:
                     console.print(Markdown(response_text))
                     updated = apply_changes(response_text)
                     if updated:
-                        push_to_github(f"Applied changes from prompt: {arg[:30]}")
+                        push_to_github(f"Applied changes from prompt")
                 else:
                     console.print("[yellow][!] Otrzymano pustą odpowiedź.[/yellow]")
             except TimeoutError:
-                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini.[/yellow]")
+                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini (300s).[/yellow]")
             except Exception as e:
                 console.print(f"[red][!] Błąd komunikacji: {e}[/red]")
 
