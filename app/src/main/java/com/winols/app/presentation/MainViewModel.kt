@@ -2,61 +2,61 @@ package com.winols.app.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.winols.app.domain.model.EcuBinary
-import kotlinx.coroutines.Dispatchers
+import com.winols.app.core.dispatcher.CoroutineDispatchers
+import com.winols.app.core.dispatcher.DefaultCoroutineDispatchers
+import com.winols.app.data.binary.BinaryFileManager
+import com.winols.app.domain.processor.EcuBinaryProcessor
+import com.winols.app.domain.processor.MapCandidate
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import java.io.File
 
-class MainViewModel : ViewModel() {
+data class EcuUiState(
+    val isLoading: Boolean = false,
+    val progress: Float = 0f,
+    val fileName: String? = null,
+    val checksum: Long? = null,
+    val detectedMaps: List<MapCandidate> = emptyList(),
+    val errorMessage: String? = null
+)
 
-    private val _state = MutableStateFlow<MainState>(MainState.Idle)
-    val state: StateFlow<MainState> = _state.asStateFlow()
+class MainViewModel(
+    private val dispatchers: CoroutineDispatchers = DefaultCoroutineDispatchers(),
+    private val fileManager: BinaryFileManager = BinaryFileManager(dispatchers),
+    private val binaryProcessor: EcuBinaryProcessor = EcuBinaryProcessor(dispatchers)
+) : ViewModel() {
 
-    fun processIntent(intent: MainIntent) {
-        when (intent) {
-            is MainIntent.LoadBinary -> loadBinaryData(intent.bytes, intent.name)
-        }
-    }
+    private val _uiState = MutableStateFlow(EcuUiState())
+    val uiState: StateFlow<EcuUiState> = _uiState.asStateFlow()
 
-    private fun loadBinaryData(bytes: ByteArray, name: String) {
+    fun loadAndAnalyzeEcuFile(file: File) {
         viewModelScope.launch {
-            _state.value = MainState.Loading
+            _uiState.update { it.copy(isLoading = true, progress = 0f, fileName = file.name) }
             try {
-                val hexPreview = withContext(Dispatchers.Default) {
-                    formatHexView(bytes, previewLimit = 512)
-                }
-                val binary = EcuBinary(name, bytes.size.toLong(), bytes)
-                _state.value = MainState.Loaded(binary, hexPreview)
-            } catch (e: Exception) {
-                _state.value = MainState.Error(e.message ?: "Unknown error loading binary")
-            }
-        }
-    }
+                // 1. Asynchroniczny odczyt I/O
+                val binaryData = fileManager.loadBinary(file)
 
-    private fun formatHexView(bytes: ByteArray, previewLimit: Int): String {
-        val sb = StringBuilder()
-        val limit = minOf(bytes.size, previewLimit)
-        for (i in 0 until limit step 16) {
-            sb.append(String.format("%08X: ", i))
-            val lineBytes = bytes.sliceArray(i until minOf(i + 16, limit))
-            for (b in lineBytes) {
-                sb.append(String.format("%02X ", b))
-            }
-            if (lineBytes.size < 16) {
-                for (k in 0 until (16 - lineBytes.size)) {
-                    sb.append("   ")
+                // 2. Asynchroniczne przeliczanie CPU
+                val checksum = binaryProcessor.calculateChecksum(binaryData)
+                _uiState.update { it.copy(checksum = checksum) }
+
+                // 3. Reaktywny streaming postępu skanowania
+                binaryProcessor.scanMaps(binaryData).collect { (progress, maps) ->
+                    _uiState.update { 
+                        it.copy(
+                            progress = progress,
+                            detectedMaps = maps
+                        ) 
+                    }
                 }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(errorMessage = e.localizedMessage) }
+            } finally {
+                _uiState.update { it.copy(isLoading = false) }
             }
-            sb.append(" | ")
-            for (b in lineBytes) {
-                val c = b.toInt().toChar()
-                if (c in ' '..'~') sb.append(c) else sb.append('.')
-            }
-            sb.append("\n")
         }
-        return sb.toString()
     }
 }

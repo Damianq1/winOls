@@ -1,61 +1,84 @@
 package com.winols.app
 
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.winols.app.databinding.ActivityMainBinding
-import com.winols.app.model.EcuMapData
-import kotlin.math.sin
+import com.winols.app.presentation.main.MainIntent
+import com.winols.app.presentation.main.MainState
+import com.winols.app.presentation.main.MainViewModel
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
+    private val viewModel: MainViewModel by viewModels()
+
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.handleIntent(MainIntent.LoadBinary(it)) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val sampleMap = generateSampleEcuMap()
+        setupListeners()
+        observeState()
+    }
 
-        binding.map2DView.setMapData(sampleMap)
-        binding.map3DView.setMapData(sampleMap)
+    private fun setupListeners() {
+        binding.btnLoadBinary.setOnClickListener {
+            filePickerLauncher.launch("*/*")
+        }
+    }
 
-        binding.viewModeToggle.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (isChecked) {
-                when (checkedId) {
-                    R.id.btnMode2D -> {
-                        binding.map2DView.visibility = View.VISIBLE
-                        binding.map3DView.visibility = View.GONE
-                    }
-                    R.id.btnMode3D -> {
-                        binding.map2DView.visibility = View.GONE
-                        binding.map3DView.visibility = View.VISIBLE
-                    }
+    private fun observeState() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { state ->
+                    render(state)
                 }
             }
         }
     }
 
-    private fun generateSampleEcuMap(): EcuMapData {
-        val rows = 16
-        val cols = 16
-        val data = FloatArray(rows * cols)
-
-        // Generowanie przykładowej charakterystyki turbodoładowania / zapłonu
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                val x = c / (cols - 1.0) * Math.PI
-                val y = r / (rows - 1.0) * Math.PI
-                data[r * cols + c] = ((sin(x) * sin(y)) * 250.0 + 50.0).toFloat()
+    private fun render(state: MainState) {
+        when (state) {
+            is MainState.Idle -> {
+                binding.progressBar.visibility = View.GONE
+                binding.statusText.text = "Wybierz plik mapy ECU (.bin) do analizy"
+                binding.hexPreviewText.text = ""
+            }
+            is MainState.Loading -> {
+                binding.progressBar.visibility = View.VISIBLE
+                binding.statusText.text = "Odczytywanie danych binarnych..."
+            }
+            is MainState.Loaded -> {
+                binding.progressBar.visibility = View.GONE
+                val sizeKb = state.ecuBinary.sizeBytes / 1024.0
+                binding.statusText.text = String.format(
+                    "Plik: %s (%.2f KB) | CRC32: 0x%08X",
+                    state.ecuBinary.fileName,
+                    sizeKb,
+                    state.ecuBinary.checksum
+                )
+                binding.hexPreviewText.text = state.previewHex
+            }
+            is MainState.Error -> {
+                binding.progressBar.visibility = View.GONE
+                binding.statusText.text = "Wystąpił błąd podczas wczytywania."
+                Toast.makeText(this, state.message, Toast.LENGTH_LONG).show()
             }
         }
-
-        return EcuMapData(
-            name = "Turbo Boost Target (16x16)",
-            rows = rows,
-            cols = cols,
-            data = data
-        )
     }
 }
