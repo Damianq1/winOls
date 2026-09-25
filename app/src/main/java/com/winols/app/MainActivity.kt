@@ -1,74 +1,83 @@
 package com.winols.app
 
-import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.winols.app.databinding.ActivityMainBinding
-import com.winols.app.presentation.MainIntent
-import com.winols.app.presentation.MainState
-import com.winols.app.presentation.MainViewModel
+import com.winols.app.presentation.mvi.EcuIntent
+import com.winols.app.presentation.mvi.EcuSingleEvent
+import com.winols.app.presentation.mvi.EcuViewState
+import com.winols.app.presentation.viewmodel.EcuViewModel
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private val viewModel: MainViewModel by viewModels()
-
-    private val filePickerLauncher = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let { readBinaryFromUri(it) }
-    }
+    private val viewModel: EcuViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.btnLoadFile.setOnClickListener {
-            filePickerLauncher.launch(arrayOf("*/*"))
-        }
+        setupListeners()
+        observeState()
+    }
 
+    private fun setupListeners() {
+        binding.btnLoadDummy.setOnClickListener {
+            val dummyBytes = ByteArray(1024)
+            Random.nextBytes(dummyBytes)
+            viewModel.handleIntent(
+                EcuIntent.LoadBinaryData(
+                    name = "EDC16_Demo_Dump.bin",
+                    bytes = dummyBytes
+                )
+            )
+        }
+    }
+
+    private fun observeState() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.state.collect { state ->
-                    render(state)
+                launch { viewModel.state.collect { render(it) } }
+                launch {
+                    viewModel.events.collect { event ->
+                        when (event) {
+                            is EcuSingleEvent.ShowToast -> Toast.makeText(
+                                this@MainActivity,
+                                event.message,
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
                 }
             }
         }
     }
 
-    private fun render(state: MainState) {
-        when (state) {
-            is MainState.Idle -> {
-                binding.tvHexDump.text = "No ECU dump loaded. Select a .bin file."
-            }
-            is MainState.Loading -> {
-                binding.tvHexDump.text = "Parsing binary..."
-            }
-            is MainState.Loaded -> {
-                binding.topAppBar.subtitle = "${state.binary.fileName} (${state.binary.sizeInBytes} bytes)"
-                binding.tvHexDump.text = state.previewHex
-            }
-            is MainState.Error -> {
-                Toast.makeText(this, state.message, Toast.LENGTH_LONG).show()
-                binding.tvHexDump.text = "Error loading file."
-            }
+    private fun render(state: EcuViewState) {
+        binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
+        
+        state.errorMessage?.let {
+            binding.tvStatus.text = "Błąd: $it"
+            binding.tvStatus.setTextColor(getColor(android.R.color.holo_red_light))
+            return
         }
-    }
 
-    private fun readBinaryFromUri(uri: Uri) {
-        contentResolver.openInputStream(uri)?.use { stream ->
-            val bytes = stream.readBytes()
-            val fileName = uri.lastPathSegment ?: "ecu_dump.bin"
-            viewModel.processIntent(MainIntent.LoadBinary(bytes, fileName))
+        if (state.binary != null) {
+            binding.tvStatus.text = "Plik: ${state.binary.fileName} (${state.binary.size} B)"
+            binding.tvStatus.setTextColor(getColor(android.R.color.white))
+            binding.tvHexContent.text = state.hexDump
+        } else {
+            binding.tvStatus.text = "Brak załadowanego wsadu binarnego."
+            binding.tvHexContent.text = ""
         }
     }
 }
