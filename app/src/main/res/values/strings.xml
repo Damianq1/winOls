@@ -1,4 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WinOls Mobile AI</string>
-    <string name="status_loaded">Załadowano binarkę: %1$d KB</string>
+    <string name="status_ready">ECU Binary Editor Engine Ready</string>
 </resources>
