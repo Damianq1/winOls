@@ -1,0 +1,15 @@
+app/src/main/java/com/winols/app/
+├── core/
+│   ├── binary/
+│   │   ├── BinaryBuffer.kt          // Wrapper na ByteBuffer z obsługą Endianness
+│   │   └── ChecksumCalculator.kt    // Silnik obliczania sum kontrolnych
+│   └── model/
+│       ├── EcuMap.kt                // Model zrzutu mapy (adres, wymiary X/Y, format)
+│       └── DataSourceFormat.kt      // 8-bit, 16-bit LoHi/HiLo, 32-bit IEEE Float
+├── domain/
+│   ├── repository/BinaryRepository.kt
+│   └── usecase/FindMapsUseCase.kt   // Wykrywanie wzorców potencjalnych map
+├── presentation/
+│   ├── viewmodel/EditorViewModel.kt
+│   ├── hexview/HexTableView.kt      // Custom View pod wydajny rendering tabeli HEX
+│   └── MainActivity.kt
