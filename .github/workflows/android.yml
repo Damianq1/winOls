@@ -5,15 +5,9 @@ on:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build & Assemble APK
     runs-on: ubuntu-latest
 
     steps:
@@ -25,21 +19,10 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
+          cache: gradle
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Verify Gradle Wrapper & Environment
-        run: ./gradlew --version
-
       - name: Build with Gradle
-        run: ./gradlew assembleDebug --stacktrace --info
-
-      - name: Upload Debug APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
+        run: ./gradlew assembleDebug --stacktrace
