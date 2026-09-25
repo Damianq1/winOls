@@ -1,6 +1,29 @@
-gemini_dev_assistant.py
-promt.txt
+# Gradle / Android Studio
+.gradle/
+build/
+app/build/
+*.iml
+.idea/
+local.properties
+.cxx/
+Captures/
+
+# Pliki kopii i edytorów
+.backups/
+*.bak
+*~
+*.swp
+.DS_Store
+Thumbs.db
+
+# Narzędzia pomocnicze / Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+venv/
 .env
-BUILD_STATUS.md
-project_tracker.py
-.Nowy folder
+
+# Duplikaty i pliki tymczasowe pobierania
+* (1).*
