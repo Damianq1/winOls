@@ -1,28 +1,10 @@
-import org.gradle.api.tasks.Exec
+import java.io.File
 
 plugins {
-    // Bazowe wtyczki projektu WinOls
+    // Standardowe wtyczki projektu Android
     alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.kotlin.android) apply false
-}
+    alias(libs.plugins.kotlinBłąd `[Errno 13] Permission denied: './gradlew'` nie wynika z błędu logicznego w kodzie źródłowym Kotlin, lecz z braku uprawnień wykonywania (`executable`) dla skryptu powłoki `gradlew` w środowisku Unix/Linux/macOS lub braku flagi wykonywalności w indeksie Gita.
 
-// Zadanie wymuszające uprawnienia wykonywania dla skryptu gradlew w środowiskach uniksowych
-tasks.register<Exec>("ensureGradlewExecutable") {
-    description = "Nadaje uprawnienia wykonywania skryptowi gradlew."
-    group = "build setup"
-    onlyIf {
-        !System.getProperty("os.name").lowercase().contains("windows")
-    }
-    commandLine("chmod", "+x", "./gradlew")
-}
+Aby zapobiec temu błędowi bezpośrednio w konfiguracji kompilacji Gradle i zapewnić, że wrapper zawsze posiada uprawnienia wykonywania podczas generowania lub aktualizowania przez Gradle, konfiguruje się zadanie `Wrapper` w głównym skrypcie kompilacji.
 
-// Zapewnienie poprawnych uprawnień przy generowaniu wrappera
-tasks.named<Wrapper>("wrapper") {
-    gradleVersion = "8.7"
-    distributionType = Wrapper.DistributionType.ALL
-    doLast {
-        if (!System.getProperty("os.name").lowercase().contains("windows")) {
-            file("gradlew").setExecutable(true, false)
-        }
-    }
-}
+### build.gradle.kts
