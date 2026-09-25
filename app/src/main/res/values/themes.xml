@@ -1,11 +1,7 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="Theme.WinOls" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
-        <item name="colorPrimary">#1A1A1A</item>
-        <item name="colorPrimaryVariant">#0D0D0D</item>
-        <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorSecondary">#00E5FF</item>
-        <item name="colorSecondaryVariant">#00B0FF</item>
-        <item name="colorOnSecondary">#000000</item>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.WinOls" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/ols_blue</item>
+        <item name="android:statusBarColor">@color/ols_dark_bg</item>
+        <item name="android:navigationBarColor">@color/ols_dark_bg</item>
     </style>
 </resources>
