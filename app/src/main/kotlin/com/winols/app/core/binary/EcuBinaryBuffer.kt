@@ -1,63 +1,134 @@
 package com.winols.app.core.binary
 
+import java.io.File
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.channels.FileChannel
 
 /**
- * Zoptymalizowany bufor binarny dla wsadów ECU.
- * Obsługuje przełączanie Endianness (Little/Big) i bezpieczny dostęp do rejestrów.
+ * Zoptymalizowany bufor pamięci bezpośredniej (Direct Buffer) dla plików binarnych ECU (512 KB - 8 MB).
+ * Obsługuje operacje odczytu/zapisu bez alokacji na stercie JVM (zero-copy / low-GC).
  */
 class EcuBinaryBuffer private constructor(
-    private var data: ByteArray,
-    var byteOrder: ByteOrder = ByteOrder.BIG_ENDIAN
+    private val buffer: ByteBuffer,
+    val size: Int
 ) {
-    val size: Int get() = data.size
-
-    fun getByte(offset: Int): Int {
-        checkBounds(offset, 1)
-        return data[offset].toInt() and 0xFF
-    }
-
-    fun getWord(offset: Int, order: ByteOrder = byteOrder): Int {
-        checkBounds(offset, 2)
-        val buffer = ByteBuffer.wrap(data, offset, 2).order(order)
-        return buffer.short.toInt() and 0xFFFF
-    }
-
-    fun getDWord(offset: Int, order: ByteOrder = byteOrder): Long {
-        checkBounds(offset, 4)
-        val buffer = ByteBuffer.wrap(data, offset, 4).order(order)
-        return buffer.int.toLong() and 0xFFFFFFFFL
-    }
-
-    fun setByte(offset: Int, value: Int) {
-        checkBounds(offset, 1)
-        data[offset] = (value and 0xFF).toByte()
-    }
-
-    fun setWord(offset: Int, value: Int, order: ByteOrder = byteOrder) {
-        checkBounds(offset, 2)
-        val buffer = ByteBuffer.allocate(2).order(order)
-        buffer.putShort((value and 0xFFFF).toShort())
-        System.arraycopy(buffer.array(), 0, data, offset, 2)
-    }
-
-    fun slice(offset: Int, length: Int): ByteArray {
-        checkBounds(offset, length)
-        return data.copyOfRange(offset, offset + length)
-    }
-
-    fun getRawBytes(): ByteArray = data.copyOf()
-
-    private fun checkBounds(offset: Int, length: Int) {
-        require(offset >= 0 && offset + length <= data.size) {
-            "Przekroczenie zakresu bufora ECU: offset=$offset, długość=$length, rozmiar bufora=${data.size}"
+    var byteOrder: ByteOrder
+        get() = buffer.order()
+        set(value) {
+            buffer.order(value)
         }
+
+    init {
+        buffer.order(ByteOrder.BIG_ENDIAN) // Domyślny format większości sterowników ECU
     }
 
     companion object {
-        fun fromBytes(bytes: ByteArray, byteOrder: ByteOrder = ByteOrder.BIG_ENDIAN): EcuBinaryBuffer {
-            return EcuBinaryBuffer(bytes.copyOf(), byteOrder)
+        fun allocateDirect(size: Int): EcuBinaryBuffer {
+            require(size > 0) { "Rozmiar bufora musi być większy niż 0" }
+            val directBuf = ByteBuffer.allocateDirect(size)
+            return EcuBinaryBuffer(directBuf, size)
+        }
+
+        /**
+         * Szybki odczyt pliku binarnego do bezpośredniego bufora pamięci.
+         */
+        fun loadFromFile(file: File): EcuBinaryBuffer {
+            require(file.exists() && file.isFile) { "Plik nie istnieje lub jest niepoprawny: ${file.path}" }
+            val fileSize = file.length().toInt()
+
+            RandomAccessFile(file, "r").use { raf ->
+                raf.channel.use { channel ->
+                    val directBuf = ByteBuffer.allocateDirect(fileSize)
+                    while (directBuf.hasRemaining()) {
+                        if (channel.read(directBuf) == -1) break
+                    }
+                    directBuf.flip()
+                    return EcuBinaryBuffer(directBuf, fileSize)
+                }
+            }
+        }
+    }
+
+    // --- OPERACJE ODCZYTU ---
+
+    fun readByte(offset: Int): Byte {
+        checkBounds(offset, 1)
+        return buffer.get(offset)
+    }
+
+    fun readUByte(offset: Int): Int {
+        return readByte(offset).toInt() and 0xFF
+    }
+
+    fun readShort(offset: Int): Short {
+        checkBounds(offset, 2)
+        return buffer.getShort(offset)
+    }
+
+    fun readUShort(offset: Int): Int {
+        return readShort(offset).toInt() and 0xFFFF
+    }
+
+    fun readInt(offset: Int): Int {
+        checkBounds(offset, 4)
+        return buffer.getInt(offset)
+    }
+
+    fun readBytes(offset: Int, length: Int): ByteArray {
+        checkBounds(offset, length)
+        val result = ByteArray(length)
+        val slice = buffer.duplicate()
+        slice.position(offset)
+        slice.get(result, 0, length)
+        return result
+    }
+
+    // --- OPERACJE ZAPISU / EDYCJI MAP ---
+
+    fun writeByte(offset: Int, value: Byte) {
+        checkBounds(offset, 1)
+        buffer.put(offset, value)
+    }
+
+    fun writeShort(offset: Int, value: Short) {
+        checkBounds(offset, 2)
+        buffer.putShort(offset, value)
+    }
+
+    fun writeInt(offset: Int, value: Int) {
+        checkBounds(offset, 4)
+        buffer.putInt(offset, value)
+    }
+
+    fun writeBytes(offset: Int, data: ByteArray) {
+        checkBounds(offset, data.size)
+        val slice = buffer.duplicate()
+        slice.position(offset)
+        slice.put(data)
+    }
+
+    /**
+     * Bezpośredni zrzut bufora pamięci do pliku wyjściowego za pomocą FileChannel.
+     */
+    fun saveToFile(targetFile: File) {
+        RandomAccessFile(targetFile, "rw").use { raf ->
+            raf.channel.use { channel ->
+                channel.truncate(0) // Wyczyszczenie istniejącej zawartości
+                val slice = buffer.duplicate()
+                slice.position(0)
+                while (slice.hasRemaining()) {
+                    channel.write(slice)
+                }
+                channel.force(true)
+            }
+        }
+    }
+
+    private fun checkBounds(offset: Int, length: Int) {
+        require(offset >= 0 && offset + length <= size) {
+            "Przekroczenie zakresu bufora: offset=$offset, długość=$length, rozmiar bufora=$size"
         }
     }
 }
