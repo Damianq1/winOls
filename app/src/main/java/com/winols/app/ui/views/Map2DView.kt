@@ -2,12 +2,12 @@ package com.winols.app.ui.views
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.util.AttributeSet
 import android.view.View
-import kotlin.math.max
-import kotlin.math.min
+import com.winols.app.model.EcuMap
 
 class Map2DView @JvmOverloads constructor(
     context: Context,
@@ -15,91 +15,56 @@ class Map2DView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private var rows = 1
-    private var cols = 1
-    private var data: IntArray = IntArray(0)
+    private var ecuMap: EcuMap? = null
 
-    private val bgPaint = Paint().apply { color = 0xFF151515.toInt() }
-    private val axisPaint = Paint().apply {
-        color = 0xFF555555.toInt()
-        strokeWidth = 2f
-    }
-    private val gridPaint = Paint().apply {
-        color = 0xFF262626.toInt()
-        strokeWidth = 1f
-    }
-    private val linePaints = listOf(
-        0xFF00E5FF.toInt(),
-        0xFFFF3D00.toInt(),
-        0xFF00E676.toInt(),
-        0xFFFFEA00.toInt(),
-        0xFFD500F9.toInt()
-    ).map { c ->
-        Paint().apply {
-            color = c
-            strokeWidth = 3f
-            style = Paint.Style.STROKE
-            isAntiAlias = true
-        }
+    private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.DKGRAY
+        strokeWidth = 1.5f
+        style = Paint.Style.STROKE
     }
 
-    fun setMapData(numRows: Int, numCols: Int, values: IntArray) {
-        this.rows = max(1, numRows)
-        this.cols = max(1, numCols)
-        this.data = values
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeWidth = 3f
+        style = Paint.Style.STROKE
+    }
+
+    private val path = Path()
+
+    fun setMap(map: EcuMap) {
+        this.ecuMap = map
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
+        val map = ecuMap ?: return
+        if (map.rows <= 0 || map.cols <= 0) return
 
-        if (data.isEmpty() || cols <= 1) return
+        val padding = 40f
+        val w = width - padding * 2
+        val h = height - padding * 2
+        if (w <= 0 || h <= 0) return
 
-        val paddingLeft = 60f
-        val paddingBottom = 60f
-        val paddingTop = 40f
-        val paddingRight = 40f
+        // Ramka siatki
+        canvas.drawRect(padding, padding, width - padding, height - padding, gridPaint)
 
-        val plotW = width - paddingLeft - paddingRight
-        val plotH = height - paddingTop - paddingBottom
+        val valRange = (map.maxVal - map.minVal).let { if (it == 0f) 1f else it }
+        val stepX = w / (map.cols - 1).coerceAtLeast(1)
 
-        // Grid lines
-        for (i in 0..4) {
-            val y = paddingTop + plotH * (i / 4f)
-            canvas.drawLine(paddingLeft, y, width - paddingRight, y, gridPaint)
-        }
+        for (r in 0 until map.rows) {
+            val hue = (r.toFloat() / map.rows.coerceAtLeast(1)) * 260f
+            linePaint.color = Color.HSVToColor(floatArrayOf(hue, 0.85f, 0.95f))
 
-        // Axes
-        canvas.drawLine(paddingLeft, paddingTop, paddingLeft, height - paddingBottom, axisPaint)
-        canvas.drawLine(paddingLeft, height - paddingBottom, width - paddingRight, height - paddingBottom, axisPaint)
-
-        var minVal = Int.MAX_VALUE
-        var maxVal = Int.MIN_VALUE
-        for (v in data) {
-            if (v < minVal) minVal = v
-            if (v > maxVal) maxVal = v
-        }
-        if (minVal == maxVal) maxVal += 1
-        val valRange = (maxVal - minVal).toFloat()
-
-        val stepX = plotW / (cols - 1)
-        val path = Path()
-
-        for (r in 0 until rows) {
             path.reset()
-            val paint = linePaints[r % linePaints.size]
+            for (c in 0 until map.cols) {
+                val value = map.getValue(r, c)
+                val normY = (value - map.minVal) / valRange
+                val px = padding + c * stepX
+                val py = (padding + h) - (normY * h)
 
-            for (c in 0 until cols) {
-                val idx = r * cols + c
-                val value = data.getOrElse(idx) { 0 }
-                val normY = (value - minVal) / valRange
-                val x = paddingLeft + c * stepX
-                val y = (height - paddingBottom) - (normY * plotH)
-
-                if (c == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                if (c == 0) path.moveTo(px, py) else path.lineTo(px, py)
             }
-            canvas.drawPath(path, paint)
+            canvas.drawPath(path, linePaint)
         }
     }
 }

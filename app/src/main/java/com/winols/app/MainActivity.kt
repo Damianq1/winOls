@@ -1,83 +1,45 @@
 package com.winols.app
 
-import android.app.Activity
-import android.content.Intent
 import android.os.Bundle
-import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.winols.app.databinding.ActivityMainBinding
-import com.winols.app.engine.BinaryProject
-import com.winols.app.engine.ByteOrderType
-import com.winols.app.engine.DataWidth
-import com.winols.app.engine.EcuMapDefinition
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.winols.app.model.EcuMap
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var binaryProject: BinaryProject? = null
-
-    private val filePickerLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            result.data?.data?.let { uri ->
-                loadBinaryFromUri(uri)
-            }
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.btnLoadBinary.setOnClickListener {
-            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                addCategory(Intent.CATEGORY_OPENABLE)
-                type = "*/*"
-            }
-            filePickerLauncher.launch(intent)
-        }
+        val demoMap = generateSampleEcuMap()
+        binding.mapTitle.text = "${demoMap.name} (${demoMap.rows}x${demoMap.cols})"
+
+        binding.map2DView.setMap(demoMap)
+        binding.map3DView.setMap(demoMap)
     }
 
-    private fun loadBinaryFromUri(uri: android.net.Uri) {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                contentResolver.openInputStream(uri)?.use { stream ->
-                    val bytes = stream.readBytes()
-                    val project = BinaryProject(bytes)
-                    binaryProject = project
+    private fun generateSampleEcuMap(): EcuMap {
+        val rows = 12
+        val cols = 16
+        val data = FloatArray(rows * cols)
 
-                    val previewHex = generateHexPreview(bytes, 512)
-                    withContext(Dispatchers.Main) {
-                        binding.tvProjectInfo.text = "Rozmiar: ${bytes.size / 1024} KB"
-                        binding.tvHexDump.text = previewHex
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Błąd wczytywania: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+        for (r in 0 until rows) {
+            for (c in 0 until cols) {
+                val factorR = r.toFloat() / (rows - 1)
+                val factorC = c.toFloat() / (cols - 1)
+                data[r * cols + c] = (kotlin.math.sin(factorC * Math.PI) * kotlin.math.cos(factorR * (Math.PI / 2)) * 1200f).toFloat() + 200f
             }
         }
-    }
 
-    private fun generateHexPreview(bytes: ByteArray, limit: Int): String {
-        val max = minOf(bytes.size, limit)
-        val sb = StringBuilder()
-        for (i in 0 until max step 16) {
-            sb.append(String.format("%08X: ", i))
-            val lineBytes = bytes.sliceArray(i until minOf(i + 16, max))
-            for (b in lineBytes) {
-                sb.append(String.format("%02X ", b))
-            }
-            sb.append("\n")
-        }
-        return sb.toString()
+        return EcuMap(
+            id = "MAP_BOOST_TARGET",
+            name = "Boost Pressure Target (mbar)",
+            rows = rows,
+            cols = cols,
+            data = data
+        )
     }
 }
