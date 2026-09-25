@@ -1,21 +1,19 @@
 import org.gradle.api.tasks.wrapper.Wrapper
 
 plugins {
-    // Podstawowe wtyczki projektu
+    // Bazowe wtyczki projektu
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
 }
 
-tasks.named<Wrapper>("wrapper") {
+tasks.withType<Wrapper> {
     gradleVersion = "8.7"
-    distributionType = Wrapper.DistributionType.BIN
-    
-    // Wymuszenie uprawnień do uruchamiania (chmod +x) dla skryptu gradlew w środowiskach uniksowych
+    distributionType = Wrapper.DistributionType.ALL
+    // Ustawienie umask / uprawnień unixowych dla generowanego skryptu gradlew
     doLast {
-        val gradlewFile = file("gradlew")
+        val gradlewFile = project.file("gradlew")
         if (gradlewFile.exists()) {
             gradlewFile.setExecutable(true, false)
-            gradlewFile.setReadable(true, false)
         }
     }
 }
