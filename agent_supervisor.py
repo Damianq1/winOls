@@ -1,5 +1,3 @@
-import context_reader
-import context_reader
 import os
 import sys
 import asyncio
@@ -68,16 +66,51 @@ def sync_with_github():
     except Exception as e:
         console.print(f"[yellow][!] Ostrzeżenie przy git pull: {e}[/yellow]")
 
-def push_to_github():
+def push_to_github(msg="Auto-fix / Update code"):
     try:
+        console.print("[yellow][*] Dodawanie zmian do Gita (git add)...[/yellow]")
+        subprocess.run(["git", "add", "."], cwd=str(PROJECT_PATH), capture_output=True)
+        
+        res_commit = subprocess.run(["git", "commit", "-m", msg], cwd=str(PROJECT_PATH), capture_output=True, text=True)
+        if res_commit.returncode == 0:
+            console.print(f"[green]{res_commit.stdout.strip()}[/green]")
+        else:
+            console.print(f"[dim]{res_commit.stdout.strip()} {res_commit.stderr.strip()}[/dim]")
+
         console.print("[yellow][*] Wysyłanie zmian na GitHub (git push)...[/yellow]")
         res = subprocess.run(["git", "push"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
         if res.returncode == 0:
             console.print("[bold green][✓] Zmiany zostały pomyślnie wypchnięte na GitHub![/bold green]")
+            console.print("[bold cyan][i] GitHub Actions przejmie teraz kompilację w chmurze.[/bold cyan]")
+            return True
         else:
             console.print(f"[yellow][!] Git push zwrócił błąd: {res.stderr.strip()}[/yellow]")
+            return False
     except Exception as e:
         console.print(f"[yellow][!] Błąd wysyłania do Gita: {e}[/yellow]")
+        return False
+
+def get_github_actions_failed_logs():
+    """Pobiera logi z ostatniego nieudanego buildu GitHub Actions za pomocą oficjalnego CLI (gh)."""
+    console.print("[yellow][*] Pobieranie logów z ostatniego GitHub Action...[/yellow]")
+    try:
+        # Sprawdzamy czy gh CLI jest dostępne i zalogowane
+        check_gh = subprocess.run(["gh", "auth", "status"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
+        if check_gh.returncode != 0:
+            return "[!] GitHub CLI (gh) nie jest zalogowany w Termuxie. Użyj /napraw <opis błędu> lub zaloguj się przez 'gh auth login'."
+
+        # Pobieranie logów failed run
+        res = subprocess.run(["gh", "run", "view", "--log-failed"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            # Zwracamy ostatnie 3000 znaków logów żeby nie przekroczyć kontekstu
+            logs = res.stdout.strip()
+            return logs[-4000:] if len(logs) > 4000 else logs
+        else:
+            # Alternatywnie pobierz status ostatnich runów
+            res_list = subprocess.run(["gh", "run", "list", "--limit", "1"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
+            return f"Brak bezpośrednich logów błędów z `gh run view --log-failed`. Ostatnie akcje:\n{res_list.stdout}"
+    except Exception as e:
+        return f"[!] Nie udało się pobrać logów przez GitHub CLI: {e}"
 
 def run_git_status():
     try:
@@ -86,45 +119,10 @@ def run_git_status():
     except Exception as e:
         console.print(f"[red]Błąd git status: {e}[/red]")
 
-def run_git_commit_and_push(msg="Manual commit"):
-    try:
-        subprocess.run(["git", "add", "."], cwd=str(PROJECT_PATH), capture_output=True)
-        res = subprocess.run(["git", "commit", "-m", msg], cwd=str(PROJECT_PATH), capture_output=True, text=True)
-        console.print(f"[green]{res.stdout}[/green]")
-        push_to_github()
-    except Exception as e:
-        console.print(f"[red]Błąd commit/push: {e}[/red]")
-
-def run_gradle_build():
-    console.print("[yellow][*] Uruchamianie kompilacji Gradle (./gradlew assembleDebug)...[/yellow]")
-    try:
-        res = subprocess.run(
-            ["./gradlew", "assembleDebug"],
-            cwd=str(PROJECT_PATH),
-            capture_output=True,
-            text=True,
-            timeout=180
-        )
-        if res.returncode == 0:
-            console.print("[bold green][✓] Build zakończony sukcesem bez błędów![/bold green]")
-            return True, "Build OK"
-        else:
-            stderr_lines = res.stderr.splitlines() + res.stdout.splitlines()
-            error_snippet = "\n".join([line for line in stderr_lines if "error" in line.lower() or "e: " in line or "fail" in line.lower()][-30:])
-            if not error_snippet:
-                error_snippet = "\n".join(stderr_lines[-25:])
-            console.print(Panel(error_snippet, title="Ostatnie błędy Gradle", border_style="red"))
-            return False, error_snippet
-    except subprocess.TimeoutExpired:
-        console.print("[red][!] Timeout kompilacji Gradle (> 180s).[/red]")
-        return False, "Timeout kompilacji Gradle (> 180s)."
-    except Exception as e:
-        return False, str(e)
-
 async def main():
     ensure_valid_cwd()
     console.clear()
-    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console[/bold green]"))
+    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (GitHub Actions Sync Mode)[/bold green]"))
 
     env = load_env_vars()
     psid = env.get("__Secure-1PSID", "")
@@ -145,11 +143,12 @@ async def main():
         return
 
     console.print("[bold cyan]Dostępne komendy:[/bold cyan]")
-    console.print("  [bold green]/prompt <treść>[/bold green] - Wyślij dowolne zapytanie do Gemini")
-    console.print("  [bold green]/napraw[/bold green]        - Uruchom build Gradle i przekaż błąd do Gemini w celu naprawy")
-    console.print("  [bold green]/git[/bold green]           - Sprawdź status git, zrób commit i push")
-    console.print("  [bold green]/pull[/bold green]          - Pobierz zmiany z GitHub (git pull)")
-    console.print("  [bold green]/exit[/bold green]          - Wyjście z programu\n")
+    console.print("  [bold green]/prompt <treść>[/bold green]       - Wyślij dowolne zapytanie do Gemini")
+    console.print("  [bold green]/napraw[/bold green]              - Pobierz logi błędów z GitHub Actions i napraw automatycznie")
+    console.print("  [bold green]/napraw <opis błędu>[/bold green] - Napraw na podstawie podanego opisu lub wklejonego błędu")
+    console.print("  [bold green]/git[/bold green]                 - Sprawdź status git, zrób commit i push")
+    console.print("  [bold green]/pull[/bold green]                - Pobierz zmiany z GitHub (git pull)")
+    console.print("  [bold green]/exit[/bold green]                - Wyjście z programu\n")
 
     while True:
         try:
@@ -172,33 +171,37 @@ async def main():
             do_push = console.input("[yellow]Czy zrobić commit i push? (t/n) > [/yellow]").strip().lower()
             if do_push == 't':
                 msg = console.input("[yellow]Wiadomość commita (Enter domyślna): [/yellow]").strip()
-                run_git_commit_and_push(msg if msg else "Interactive checkpoint")
+                push_to_github(msg if msg else "Manual checkpoint")
 
         elif action == "/pull":
             sync_with_github()
 
         elif action == "/napraw":
-            success, build_output = run_gradle_build()
-            if success:
-                console.print("[green]Projekt kompiluje się poprawnie, brak błędów do naprawy.[/green]")
-                continue
+            # Rozróżnienie dwóch trybów /napraw:
+            if arg:
+                # Tryb 2: Podano opis / błąd bezpośrednio w argumencie
+                issue_desc = arg
+                console.print(f"[cyan][*] Analiza zgłoszonego błędu: {issue_desc}[/cyan]")
+            else:
+                # Tryb 1: Brak argumentu -> pobieramy logi z GitHub Actions
+                issue_desc = get_github_actions_failed_logs()
+                console.print(Panel(issue_desc[:500] + "..." if len(issue_desc) > 500 else issue_desc, title="Pobrane logi GitHub Actions", border_style="yellow"))
 
             prompt = (
                 f"Projekt: WinOls (Android ECU Binary Editor)\n"
-                f"Wystąpił błąd podczas kompilacji Gradle. Przeanalizuj poniższy komunikat, wskaż plik i podaj poprawkę:\n\n"
-                f"--- BŁĄD ---\n{build_output}\n\n"
-                f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą. Napraw błąd w kodzie Kotlin i zwróć zmianę w formacie:\n"
+                f"Błąd / Logi z GitHub Actions:\n{issue_desc}\n\n"
+                f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą. Znajdź błąd w kodzie, popraw go i zwróć zmianę w formacie:\n"
                 f"### ścieżka/do/pliku\n```kotlin\n// kod poprawionego pliku\n```"
             )
 
-            console.print("[cyan][*] Wysyłanie błędu do Gemini...[/cyan]")
+            console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini...[/cyan]")
             try:
                 response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=60), timeout=70)
                 if response_text:
                     console.print(Markdown(response_text))
                     updated = apply_changes(response_text)
                     if updated:
-                        run_git_commit_and_push(f"Auto-fix błędu dla: {', '.join(updated)}")
+                        push_to_github(f"Auto-fix z logów GitHub Actions: {', '.join(updated)}")
                 else:
                     console.print("[yellow][!] Otrzymano pustą odpowiedź lub limit zapytań (429).[/yellow]")
             except TimeoutError:
@@ -219,7 +222,7 @@ async def main():
                     if save_file == 't':
                         updated = apply_changes(response_text)
                         if updated:
-                            run_git_commit_and_push(f"Applied changes from prompt")
+                            push_to_github(f"Applied changes from prompt")
                 else:
                     console.print("[yellow][!] Otrzymano pustą odpowiedź lub limit zapytań (429).[/yellow]")
             except TimeoutError:
@@ -234,7 +237,7 @@ async def main():
         await connector.close()
     except Exception:
         pass
-        
+
     console.print("[bold green][*] Zakończono pracę agenta.[/bold green]")
 
 if __name__ == "__main__":
