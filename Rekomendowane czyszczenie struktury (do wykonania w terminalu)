@@ -1,0 +1,9 @@
+# 1. Usuń zduplikowane pliki Gradle Kotlin DSL:
+rm build.gradle.kts settings.gradle.kts app/build.gradle.kts
+
+# 2. Usuń foldery tymczasowe i zduplikowane skrypty:
+rm -rf ".Nowy katalog"
+rm "gemini_dev_assistant (1).py"
+
+# 3. Jeśli katalog src/main/kotlin w roocie zawierał kod aplikacji, przenieś go do modułu app:
+# mv src/main/kotlin/* app/src/main/kotlin/ && rm -rf src/
