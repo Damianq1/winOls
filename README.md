@@ -1,31 +1,17 @@
-# WinOls Mobile
+# WinOls Android — Version 2.0
 
-Mobilny edytor map ECU dla Androida, pakiet `com.winols.app`.
+Mobilny edytor plików binarnych ECU dla Androida. Projekt zawiera kod aplikacji, silniki analizy/edycji, zasoby UI, testy jednostkowe i workflow GitHub Actions.
 
-## Funkcje
-- BIN i Intel HEX (odczyt/zapis)
-- direct `java.nio.ByteBuffer` dla bufora roboczego
-- 8/16/32-bit, signed/unsigned, Little/Big Endian
-- RAW → fizyczne: `RAW * Factor + Offset`
-- heurystyczne wykrywanie potencjalnych map z oceną confidence
-- masowa edycja: +, -, %, wartość stała, smoothing
-- undo
-- podgląd HEX/tabelaryczny/2D/3D
-- CSV oraz XLSX bez dodatkowej biblioteki arkuszowej
-- ADD8, ADD16 LE/BE, CRC16-CCITT i CRC32
-- operacje I/O i skanowanie poza głównym wątkiem przez Coroutines
-- GitHub Actions budujące debug APK
+## Budowanie APK w GitHub
+1. Wypakuj zawartość archiwum.
+2. Wgraj zawartość folderu `WinOls_V2` do głównego katalogu repozytorium.
+3. Otwórz **Actions** i uruchom workflow **Android APK** albo wykonaj push do `main`.
+4. Pobierz artefakt `WinOls-v2-debug-apk`.
 
-## Budowanie
+## Budowanie lokalne
+Wymagane JDK 17, Android SDK platform 35, Build Tools 35.0.0 i Gradle 8.7+:
+`gradle :app:assembleDebug`
+`gradle :app:testDebugUnitTest`
 
-```bash
-chmod +x gradlew
-./gradlew :app:assembleDebug
-```
-
-Jeżeli system nie ma jeszcze Gradle'a, `gradlew` pobierze Gradle 8.2 z oficjalnego serwera.
-
-W GitHub Actions używany jest Gradle 8.2 oraz JDK 17. APK znajduje się w `app/build/outputs/apk/debug/`.
-
-## Ważne
-Automatyczny MapFinder jest heurystycznym detektorem kandydatów. Nie jest bazą definicji konkretnych sterowników ECU i nie gwarantuje poprawnego rozpoznania każdej mapy. Przed zapisaniem modyfikowanego pliku należy zweryfikować mapę, typ danych, skalowanie, adresację i właściwy algorytm checksum dla konkretnego ECU.
+## Zakres i ograniczenia
+Aplikacja udostępnia funkcje edycji/analizy plików BIN/HEX zaimplementowane w kodzie źródłowym projektu, w tym widoki i narzędzia obecne w module app. To nie jest certyfikowany zamiennik komercyjnego WinOLS. Algorytmy checksum są zależne od ECU; przed zapisem do sterownika należy zweryfikować wynik na kopii i użyć właściwej definicji dla konkretnego sterownika. Automatyczne wykrywanie map ma charakter heurystyczny.
