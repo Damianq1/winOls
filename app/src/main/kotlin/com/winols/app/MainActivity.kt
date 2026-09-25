@@ -1,93 +1,80 @@
 package com.winols.app
 
-import android.net.Uri
 import android.os.Bundle
+import android.view.LayoutInflater
+import android.widget.RadioButton
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import com.winols.app.databinding.ActivityMainBinding
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.InputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-
-    private val openFileLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri?.let { loadBinaryFile(it) }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        binding.btnOpenFile.setOnClickListener {
-            openFileLauncher.launch("*/*")
+        binding.ecuTableView.onSelectionChangedListener = { selRows, selCols ->
+            binding.selectionInfo.text = "Zaznaczono: $selRows wierszy × $selCols kolumn (${selRows * selCols} komórek)"
+        }
+
+        binding.btnBulkEdit.setOnClickListener {
+            if (!binding.ecuTableView.hasSelection()) {
+                Toast.makeText(this, "Najpierw zaznacz komórki na mapie!", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            showBulkEditDialog()
         }
     }
 
-    private fun loadBinaryFile(uri: Uri) {
-        binding.tvFileName.text = uri.lastPathSegment ?: "Wybrany plik"
-        binding.tvHexDump.text = "Ładowanie danych binarnych..."
+    private fun showBulkEditDialog() {
+        val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_bulk_edit, null)
+        val etValue = dialogView.findViewById<TextInputEditText>(R.id.etValue)
+        val inputLayout = dialogView.findViewById<TextInputLayout>(R.id.inputLayoutValue)
+        val rbSmooth = dialogView.findViewById<RadioButton>(R.id.rbSmooth)
+        val rbOffset = dialogView.findViewById<RadioButton>(R.id.rbOffset)
+        val rbPercent = dialogView.findViewById<RadioButton>(R.id.rbPercent)
+        val rbSetValue = dialogView.findViewById<RadioButton>(R.id.rbSetValue)
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                contentResolver.openInputStream(uri)?.use { inputStream ->
-                    val buffer = ByteArray(2048) // Podgląd pierwszych 2 KB pliku
-                    val bytesRead = inputStream.read(buffer)
-                    val hexDump = if (bytesRead > 0) {
-                        formatHexDump(buffer.copyOf(bytesRead))
-                    } else {
-                        "Plik jest pusty."
-                    }
+        rbSmooth.setOnCheckedChangeListener { _, isChecked ->
+            inputLayout.isEnabled = !isChecked
+            if (isChecked) etValue.setText("")
+        }
 
-                    withContext(Dispatchers.Main) {
-                        binding.tvHexDump.text = hexDump
+        MaterialAlertDialogBuilder(this)
+            .setView(dialogView)
+            .setPositiveButton("Zastosuj") { _, _ ->
+                val text = etValue.text.toString().trim()
+
+                when {
+                    rbSmooth.isChecked -> {
+                        binding.ecuTableView.applySmoothing()
                     }
-                } ?: withContext(Dispatchers.Main) {
-                    binding.tvHexDump.text = "Nie udało się otworzyć strumienia pliku."
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Błąd odczytu: ${e.message}", Toast.LENGTH_LONG).show()
-                    binding.tvHexDump.text = "Błąd: ${e.localizedMessage}"
+                    rbOffset.isChecked -> {
+                        text.toIntOrNull()?.let { binding.ecuTableView.applyOffset(it) }
+                            ?: showToastError()
+                    }
+                    rbPercent.isChecked -> {
+                        text.toDoubleOrNull()?.let { binding.ecuTableView.applyPercentage(it) }
+                            ?: showToastError()
+                    }
+                    rbSetValue.isChecked -> {
+                        text.toIntOrNull()?.let { binding.ecuTableView.applyFixedValue(it) }
+                            ?: showToastError()
+                    }
                 }
             }
-        }
+            .setNegativeButton("Anuluj", null)
+            .show()
     }
 
-    private fun formatHexDump(data: ByteArray): String {
-        val sb = StringBuilder()
-        val rowSize = 16
-
-        for (i in data.indices step rowSize) {
-            sb.append(String.format("%08X: ", i))
-
-            val end = minOf(i + rowSize, data.size)
-            for (j in i until end) {
-                sb.append(String.format("%02X ", data[j]))
-            }
-
-            if (end - i < rowSize) {
-                val pad = (rowSize - (end - i)) * 3
-                sb.append(" ".repeat(pad))
-            }
-
-            sb.append(" |")
-            for (j in i until end) {
-                val b = data[j].toInt().toChar()
-                if (b in ' '..'~') {
-                    sb.append(b)
-                } else {
-                    sb.append('.')
-                }
-            }
-            sb.append("|\n")
-        }
-        return sb.toString()
+    private fun showToastError() {
+        Toast.makeText(this, "Podaj poprawną wartość liczbową", Toast.LENGTH_SHORT).show()
     }
 }

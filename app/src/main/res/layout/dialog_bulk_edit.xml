@@ -4,94 +4,66 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="20dp"
-    android:background="#21252B">
+    android:background="#242424">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Masowa Edycja Komórek"
+        android:text="Masowa edycja zaznaczenia"
+        android:textColor="#FFFFFF"
         android:textSize="18sp"
         android:textStyle="bold"
-        android:textColor="#ECEFF4"
         android:layout_marginBottom="16dp" />
 
     <RadioGroup
-        android:id="@+id/rgOperations"
+        android:id="@+id/rgOperation"
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 
         <RadioButton
-            android:id="@+id/rbAdd"
+            android:id="@+id/rbOffset"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Dodaj stałą (+)"
-            android:textColor="#ECEFF4"
+            android:text="Dodaj / Odejmij wartość (+/-)"
+            android:textColor="#EEEEEE"
             android:checked="true" />
 
         <RadioButton
-            android:id="@+id/rbSubtract"
+            android:id="@+id/rbPercent"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Odejmij stałą (-)"
-            android:textColor="#ECEFF4" />
+            android:text="Zmiana procentowa (%)"
+            android:textColor="#EEEEEE" />
 
         <RadioButton
-            android:id="@+id/rbPercentage"
+            android:id="@+id/rbSetValue"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Zmień procentowo (%)"
-            android:textColor="#ECEFF4" />
-
-        <RadioButton
-            android:id="@+id/rbConstant"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Ustaw stałą wartość"
-            android:textColor="#ECEFF4" />
+            android:text="Wklej stałą wartość"
+            android:textColor="#EEEEEE" />
 
         <RadioButton
             android:id="@+id/rbSmooth"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Wygładź (Smoothing 0.0 - 1.0)"
-            android:textColor="#ECEFF4" />
-
-        <RadioButton
-            android:id="@+id/rbInterpolate"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Interpolacja narożna (Bilinear)"
-            android:textColor="#ECEFF4" />
+            android:text="Wygładzanie (Średnia sąsiedztwa)"
+            android:textColor="#EEEEEE" />
     </RadioGroup>
 
-    <EditText
-        android:id="@+id/etOperandValue"
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/inputLayoutValue"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:inputType="numberDecimal|numberSigned"
-        android:hint="Wartość / Procent / Współczynnik"
-        android:textColor="#FFFFFF"
-        android:textColorHint="#7F848E"
         android:layout_marginTop="12dp"
-        android:layout_marginBottom="16dp" />
+        android:textColorHint="#9E9E9E">
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="end">
-
-        <Button
-            android:id="@+id/btnCancelBulk"
-            android:layout_width="wrap_content"
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/etValue"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Anuluj"
-            android:layout_marginEnd="8dp" />
+            android:hint="Wartość (np. 50, -20, 5%)"
+            android:inputType="numberSigned|numberDecimal"
+            android:textColor="#FFFFFF" />
+    </com.google.android.material.textfield.TextInputLayout>
 
-        <Button
-            android:id="@+id/btnApplyBulk"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Zastosuj" />
-    </LinearLayout>
 </LinearLayout>
