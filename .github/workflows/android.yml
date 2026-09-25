@@ -1,9 +1,45 @@
-name: Android CI & Build Release
+name: Android CI
 
 on:
   push:
     branches: [ "main", "master" ]
   pull_request:
-    branches: [ "main",Oto zunifikowany, zoptymalizowany plik konfiguracyjny GitHub Actions dla aplikacji Android (WinOls ECU Editor), integrujący automatyczną konfigurację środowiska JDK, uprawnienia wykonywania dla Gradle Wrappera, budowanie artefaktów (APK/AAB) oraz publikację wyników.
+    branches: [ "main", "master" ]
+  workflow_dispatch:
 
-### .github/workflows/android.yml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & Assemble APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Verify Gradle Wrapper & Environment
+        run: ./gradlew --version
+
+      - name: Build with Gradle
+        run: ./gradlew assembleDebug --stacktrace --info
+
+      - name: Upload Debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7

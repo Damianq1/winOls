@@ -3,7 +3,51 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path android:fillColor="#0F172A" android:pathData="M0,0h108v108h-108z"/>
-    <path android:fillColor="#38BDF8" android:pathData="M14,84 L30,50 L50,70 L74,30 L94,84 Z"/>
-    <path android:strokeColor="#F59E0B" android:strokeWidth="4" android:pathData="M14,84 L30,50 L50,70 L74,30 L94,84"/>
-</vector>
+    <path
+        android:fillColor="#1E88E5"
+        android:pathData="M10,10h88v88h-88z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,35h48v8h-48zMAnaliza struktury projektu, plików konfiguracyjnych i zależności wykazuje kilka istotnych konfliktów oraz problemów ze spójnością:
+
+---
+
+### Zidentyfikowane błędy i niezgodności
+
+1. **Konflikt skryptów Gradle (Groovy `.gradle` vs Kotlin DSL `.gradle.kts`):**
+   * W katalogu głównym istnieją jednocześnie: `build.gradle` i `build.gradle.kts` oraz `settings.gradle` i `settings.gradle.kts`.
+   * W podkatalogu `app/` istnieją jednocześnie: `app/build.gradle` i `app/build.gradle.kts`.
+   * **Skutek:** Gradle zgłosi błąd kolizji skryptów budowania lub zachowa się niedeterministycznie. Należy zdecydować się na jeden format (poniżej standaryzacja na tradycyjny Groovy `.gradle` lub czyste `.gradle.kts`; pliki `.kts` w strukturze powinny zostać usunięte).
+
+2. **Zduplikowana struktura kodu źródłowego (`src/` w katalogu głównym):**
+   * W katalogu głównym znajduje się `src/main/kotlin/`, a moduł Androida skonfigurowany jest w `app/src/main/`.
+   * Kod aplikacji ECU editora powinien znajdować się wyłącznie wewnątrz `app/src/main/java/` lub `app/src/main/kotlin/`. Katalog `WinOls/src/` w korzeniu jest zbędny i wprowadza w błąd kompilator.
+
+3. **Brakujące zasoby i klasa bazowa w `app/src/main/AndroidManifest.xml`:**
+   * W manifeście zadeklarowano `android:name=".MainActivity"`, ale w drzewie katalogów `app/src/main/` brakuje folderu `java/com/winols/app/` lub `kotlin/com/winols/app/` z plikiem `MainActivity.kt`.
+   * Manifest odwołuje się do `@drawable/ic_winols_logo`, podczas gdy w `app/src/main/` nie ma katalogu `res/drawable/`.
+
+4. **Niewłaściwa konfiguracja JVM w Gradle dla Kotlina 2.0+:**
+   * W `app/build.gradle` użyto przestarzałego bloku `kotlinOptions { jvmTarget = '17' }`. W nowym Kotlin Gradle Plugin (2.0+) zalecany jest blok `compilerOptions`.
+
+5. **Śmieciowe katalogi i pliki pomocnicze:**
+   * Katalog `.Nowy katalog/` oraz duplikaty skryptów pythona (`gemini_dev_assistant (1).py`, zduplikowane pliki w podfolderach) zaśmiecają środowisko robocze.
+
+---
+
+### Wymagane poprawki i rekomendowane pliki
+
+#### 1. Czyszczenie zdublowanych plików konfiguracyjnych
+Usuń zbędne pliki kolizyjne:
+* `WinOls/build.gradle.kts`
+* `WinOls/settings.gradle.kts`
+* `WinOls/app/build.gradle.kts`
+* Cały zbędny folder: `WinOls/src/` (przenieść ewentualny kod do `WinOls/app/src/main/kotlin/`)
+* Śmieciowe foldery tymczasowe: `WinOls/.Nowy katalog/`
+
+---
+
+#### 2. Dostosowany plik `app/build.gradle`
+Poprawiona konfiguracja zaktualizowana pod AGP 8.6+ i Kotlin 2.0+:
+
+### app/build.gradle
