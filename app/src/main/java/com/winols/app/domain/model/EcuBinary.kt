@@ -2,32 +2,33 @@ package com.winols.app.domain.model
 
 data class EcuBinary(
     val fileName: String,
-    val rawBytes: ByteArray,
-    val size: Int = rawBytes.size
+    val data: ByteArray,
+    val sizeInBytes: Int = data.size
 ) {
-    fun toHexPreview(maxBytes: Int = 512): String {
-        val sb = StringBuilder()
-        val limit = minOf(rawBytes.size, maxBytes)
-        for (i in 0 until limit step 16) {
-            sb.append(String.format("%08X: ", i))
-            val lineBytes = rawBytes.sliceArray(i until minOf(i + 16, limit))
-            for (b in lineBytes) {
-                sb.append(String.format("%02X ", b))
-            }
-            sb.append("\n")
+    fun readByte(offset: Int): Int {
+        if (offset !in 0 until sizeInBytes) return 0
+        return data[offset].toInt() and 0xFF
+    }
+
+    fun readWord16(offset: Int, isLittleEndian: Boolean = false): Int {
+        if (offset + 1 >= sizeInBytes) return 0
+        val b1 = data[offset].toInt() and 0xFF
+        val b2 = data[offset + 1].toInt() and 0xFF
+        return if (isLittleEndian) {
+            (b2 shl 8) or b1
+        } else {
+            (b1 shl 8) or b2
         }
-        if (rawBytes.size > maxBytes) {
-            sb.append("\n... [obcięto podgląd: łącznie ${rawBytes.size} bajtów]")
-        }
-        return sb.toString()
     }
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (javaClass != other?.javaClass) return false
         other as EcuBinary
-        return rawBytes.contentEquals(other.rawBytes)
+        return data.contentEquals(other.data)
     }
 
-    override fun hashCode(): Int = rawBytes.contentHashCode()
+    override fun hashCode(): Int {
+        return data.contentHashCode()
+    }
 }

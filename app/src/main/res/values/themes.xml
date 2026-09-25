@@ -1,9 +1,7 @@
-<resources xmlns:tools="http://schemas.androidDzięki! Projekt ma już solidny fundament konfiguracji Gradle i uprawnień pod operacje na plikach binarnych (obsługa pamięci masowej dla plików `.bin`, `.hex`, `.ols`), ale po analizie drzewa katalogów widać trzy krytyczne braki blokujące kompilację i dalszy rozwój:
-
-1. **Konflikt plików konfiguracyjnych:** W projekcie istnieją jednocześnie pliki Groovy (`build.gradle`, `settings.gradle`) oraz Kotlin DSL (`build.gradle.kts`, `settings.gradle.kts`). Należy usunąć redundantne pliki `.kts` lub przejść w 100% na Kotlin DSL, aby Gradle nie zgłaszał kolizji.
-2. **Brak stylów bazowych:** W `AndroidManifest.xml` zdefiniowano `@style/Theme.WinOls`, jednak brakuje zasobów w `app/src/main/res/values/themes.xml` (lub `styles.xml`), co wywoła błąd AAPT podczas builda.
-3. **Brak klasy `MainActivity`:** Manifest wskazuje `.MainActivity`, podczas gdy w `app/src/main/` nie ma jeszcze pakietu źródłowego `com/winols/app`.
-
-Oto implementacja brakujących elementów bazowych (styl motywu, layout oraz szkielet `MainActivity` z obsługą ViewBindingu i przygotowaniem pod architekturę MVI / Clean Architecture):
-
-### app/src/main/res/values/themes.xml
+<resources>
+    <style name="Theme.WinOls" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#1E88E5</item>
+        <item name="colorPrimaryVariant">#1565C0</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+    </style>
+</resources>

@@ -1,33 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="[http://schemas.android.com/apk/res/android](http://schemas.android.com/apk/res/android)"
-    xmlns:app="[http://schemas.android.com/apk/res-auto](http://schemas.android.com/apk/res-auto)"
-    xmlns:tools="[http://schemas.android.com/tools](http://schemas.android.com/tools)"
+<androidx.constraintlayout.widget.ConstraintLayout 
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212">
-
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/topAppBar"
-        android:layout_width="0dp"
-        android:layout_height="?attr/actionBarSize"
-        android:background="#1E1E1E"
-        app:title="WinOls Mobile"
-        app:titleTextColor="#FFFFFF"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
-
-    <TextView android:fontFamily="monospace" android:id="@+id/tvHexPlaceholder" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Brak otwartego pliku binarnego (ECU DUMP)" android:textColor="#757575" android:textSize="14sp" app:layout_constraintBottom_toTopOf="@+id/btnOpenFile" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@+id/topAppBar"/>
+    android:padding="16dp">
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnOpenFile"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Wczytaj Wsad ECU (.bin)"
+        app:layout_constraintEnd_toStartOf="@id/btnScanMaps"
+        app:layout_constraintHorizontal_bias="0.5"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTopToTopOf="parent" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnScanMaps"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:text="Skanuj Mapy"
+        android:enabled="false"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintHorizontal_bias="0.5"
+        app:layout_constraintStart_toEndOf="@id/btnOpenFile"
+        app:layout_constraintTopToTopOf="parent" />
+
+    <TextView
+        android:id="@+id/tvFileInfo"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Nie załadowano pliku binarnego"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/btnOpenFile" />
+
+    <TextView
+        android:id="@+id/tvMapCount"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Wykryte mapy: 0"
+        android:textSize="14sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tvFileInfo" />
+
+    <ProgressBar
+        android:id="@+id/progressBar"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="32dp"
-        android:text="Wczytaj plik binarnego wsadu"
-        app:cornerRadius="8dp"
+        android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

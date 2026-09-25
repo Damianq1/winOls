@@ -1,25 +1,35 @@
 package com.winols.app
 
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.winols.app.databinding.ActivityMainBinding
-import com.winols.app.presentation.mvi.EcuIntent
-import com.winols.app.presentation.mvi.EcuSingleEvent
-import com.winols.app.presentation.mvi.EcuViewState
-import com.winols.app.presentation.viewmodel.EcuViewModel
+import com.winols.app.presentation.main.MainIntent
+import com.winols.app.presentation.main.MainState
+import com.winols.app.presentation.main.MainViewModel
 import kotlinx.coroutines.launch
-import kotlin.random.Random
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private val viewModel: EcuViewModel by viewModels()
+    private val viewModel: MainViewModel by viewModels()
+
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            result.data?.data?.let { uri -> readBytesFromUri(uri) }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,53 +41,49 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupListeners() {
-        binding.btnLoadDummy.setOnClickListener {
-            val dummyBytes = ByteArray(1024)
-            Random.nextBytes(dummyBytes)
-            viewModel.handleIntent(
-                EcuIntent.LoadBinaryData(
-                    name = "EDC16_Demo_Dump.bin",
-                    bytes = dummyBytes
-                )
-            )
+        binding.btnOpenFile.setOnClickListener {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+            }
+            filePickerLauncher.launch(intent)
         }
+
+        binding.btnScanMaps.setOnClickListener {
+            viewModel.handleIntent(MainIntent.ScanForMaps)
+        }
+    }
+
+    private fun readBytesFromUri(uri: Uri) {
+        contentResolver.openInputStream(uri)?.use { stream ->
+            val bytes = stream.readBytes()
+            val fileName = uri.lastPathSegment ?: "ecu_dump.bin"
+            viewModel.handleIntent(MainIntent.LoadBinary(fileName, bytes))
+        } ?: Toast.makeText(this, "Nie udało się otworzyć pliku", Toast.LENGTH_SHORT).show()
     }
 
     private fun observeState() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { viewModel.state.collect { render(it) } }
-                launch {
-                    viewModel.events.collect { event ->
-                        when (event) {
-                            is EcuSingleEvent.ShowToast -> Toast.makeText(
-                                this@MainActivity,
-                                event.message,
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                }
+                viewModel.uiState.collect { state -> render(state) }
             }
         }
     }
 
-    private fun render(state: EcuViewState) {
+    private fun render(state: MainState) {
         binding.progressBar.visibility = if (state.isLoading) View.VISIBLE else View.GONE
-        
-        state.errorMessage?.let {
-            binding.tvStatus.text = "Błąd: $it"
-            binding.tvStatus.setTextColor(getColor(android.R.color.holo_red_light))
-            return
+        binding.btnScanMaps.isEnabled = state.binary != null && !state.isLoading
+
+        state.binary?.let {
+            binding.tvFileInfo.text = "Plik: ${it.fileName} | Rozmiar: ${it.sizeInBytes / 1024} KB"
+        } ?: run {
+            binding.tvFileInfo.text = "Nie załadowano pliku binarnego"
         }
 
-        if (state.binary != null) {
-            binding.tvStatus.text = "Plik: ${state.binary.fileName} (${state.binary.size} B)"
-            binding.tvStatus.setTextColor(getColor(android.R.color.white))
-            binding.tvHexContent.text = state.hexDump
-        } else {
-            binding.tvStatus.text = "Brak załadowanego wsadu binarnego."
-            binding.tvHexContent.text = ""
+        binding.tvMapCount.text = "Wykryte mapy: ${state.maps.size}"
+        
+        state.error?.let {
+            Toast.makeText(this, it, Toast.LENGTH_LONG).show()
         }
     }
 }
