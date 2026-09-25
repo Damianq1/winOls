@@ -3,6 +3,7 @@ import sys
 import asyncio
 import subprocess
 import re
+import json
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
@@ -91,26 +92,131 @@ def push_to_github(msg="Auto-fix / Update code"):
         return False
 
 def get_github_actions_failed_logs():
-    """Pobiera logi z ostatniego nieudanego buildu GitHub Actions za pomocą oficjalnego CLI (gh)."""
-    console.print("[yellow][*] Pobieranie logów z ostatniego GitHub Action...[/yellow]")
+    """Pobiera logi z GitHub Actions, odrzuca nagłówki środowiskowe i wyciąga faktyczne błędy."""
+    console.print("[yellow][*] Pobieranie i filtrowanie logów z GitHub Actions...[/yellow]")
     try:
-        # Sprawdzamy czy gh CLI jest dostępne i zalogowane
         check_gh = subprocess.run(["gh", "auth", "status"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
         if check_gh.returncode != 0:
-            return "[!] GitHub CLI (gh) nie jest zalogowany w Termuxie. Użyj /napraw <opis błędu> lub zaloguj się przez 'gh auth login'."
+            return "[!] GitHub CLI (gh) nie jest zalogowany w Termuxue."
 
-        # Pobieranie logów failed run
-        res = subprocess.run(["gh", "run", "view", "--log-failed"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
-        if res.returncode == 0 and res.stdout.strip():
-            # Zwracamy ostatnie 3000 znaków logów żeby nie przekroczyć kontekstu
-            logs = res.stdout.strip()
-            return logs[-4000:] if len(logs) > 4000 else logs
+        res_list = subprocess.run(
+            ["gh", "run", "list", "--limit", "1", "--json", "databaseId,status,conclusion"],
+            cwd=str(PROJECT_PATH), capture_output=True, text=True
+        )
+        
+        run_id = None
+        if res_list.returncode == 0 and res_list.stdout.strip():
+            runs = json.loads(res_list.stdout)
+            if runs:
+                run_id = runs[0].get("databaseId")
+
+        raw_logs = ""
+        if run_id:
+            res_logs = subprocess.run(["gh", "run", "view", str(run_id), "--log-failed"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
+            if res_logs.returncode == 0 and len(res_logs.stdout.strip()) > 50:
+                raw_logs = res_logs.stdout.strip()
+            else:
+                res_all = subprocess.run(["gh", "run", "view", str(run_id), "--log"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
+                if res_all.returncode == 0:
+                    raw_logs = res_all.stdout.strip()
+
+        if not raw_logs:
+            res = subprocess.run(["gh", "run", "view", "--log-failed"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
+            raw_logs = res.stdout.strip() if res.returncode == 0 else "Brak logów."
+
+        lines = raw_logs.splitlines()
+        filtered_lines = []
+        ignore_keywords = ["java_home", "gradle_user_home", "develocity", "http://", "https://", "cache", "job", "steps", "git clone"]
+
+        for line in lines:
+            lower_line = line.lower()
+            if any(ign in lower_line for ign in ignore_keywords) and not any(err in lower_line for err in ["error", "fail", "unresolved", "exception", "failed"]):
+                continue
+            
+            if any(kw in lower_line for kw in ["error", "fail", "exception", "e: ", "unresolved", "cannot", "does not exist", "syntax", "compilation", "FAILURE:"]):
+                filtered_lines.append(line)
+        
+        if filtered_lines:
+            result = "\n".join(filtered_lines[-120:])
         else:
-            # Alternatywnie pobierz status ostatnich runów
-            res_list = subprocess.run(["gh", "run", "list", "--limit", "1"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
-            return f"Brak bezpośrednich logów błędów z `gh run view --log-failed`. Ostatnie akcje:\n{res_list.stdout}"
+            clean_lines = [l for l in lines if "2026-" not in l or "Z  " not in l]
+            result = "\n".join((clean_lines if clean_lines else lines)[-60:])
+            
+        return result[-3500:] if len(result) > 3500 else result
+
     except Exception as e:
         return f"[!] Nie udało się pobrać logów przez GitHub CLI: {e}"
+
+def check_latest_workflow_status():
+    try:
+        res = subprocess.run(
+            ["gh", "run", "list", "--limit", "1", "--json", "status,conclusion"],
+            cwd=str(PROJECT_PATH), capture_output=True, text=True
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            runs = json.loads(res.stdout)
+            if runs:
+                return runs[0].get("status"), runs[0].get("conclusion")
+    except Exception:
+        pass
+    return "unknown", "unknown"
+
+async def monitor_and_auto_fix(connector, max_attempts=3, check_interval_sec=120):
+    for attempt in range(1, max_attempts + 1):
+        console.print(f"\n[bold cyan][*] [Próba {attempt}/{max_attempts}] Oczekiwanie na GitHub Actions (sprawdzanie co {check_interval_sec//60} min)...[/bold cyan]")
+        
+        await asyncio.sleep(20)
+        elapsed = 20
+        
+        while elapsed < 1200:
+            status, conclusion = check_latest_workflow_status()
+            console.print(f"[dim]Status CI: status={status}, conclusion={conclusion} (Minęło {elapsed}s)[/dim]")
+            
+            if status == "completed":
+                if conclusion == "success":
+                    console.print("[bold green][✓] Sukces! GitHub Actions zakończyło budowanie pomyślnie.[/bold green]")
+                    return True
+                elif conclusion == "failure":
+                    console.print("[bold red][!] Wykryto błąd budowania (failure) na GitHub Actions![/bold red]")
+                    break
+            
+            await asyncio.sleep(check_interval_sec)
+            elapsed += check_interval_sec
+
+        console.print("[yellow][*] Pobieranie logów błędów z GitHub Actions do automatycznej naprawy...[/yellow]")
+        issue_desc = get_github_actions_failed_logs()
+        console.print(Panel(issue_desc[:500] + "..." if len(issue_desc) > 500 else issue_desc, title="Pobrane logi błędów CI", border_style="yellow"))
+
+        prompt = (
+            f"Projekt: WinOls (Android ECU Binary Editor)\n"
+            f"Automatyczna pętla naprawcza (Próba {attempt}/{max_attempts}). Wykryto błąd w GitHub Actions:\n{issue_desc}\n\n"
+            f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą. Znajdź błąd w kodzie, popraw go i zwróć zmianę w formacie:\n"
+            f"### ścieżka/do/pliku\n```kotlin\n// kod poprawionego pliku\n```"
+        )
+
+        console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini (zwiększony timeout)...[/cyan]")
+        try:
+            response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=200), timeout=220)
+            if response_text:
+                console.print(Markdown(response_text))
+                updated = apply_changes(response_text)
+                if updated:
+                    pushed = push_to_github(f"Auto-fix pętli CI (próba {attempt}): {', '.join(updated)}")
+                    if not pushed:
+                        console.print("[red][!] Błąd wypychania poprawki na GitHub. Przerywam pętlę.[/red]")
+                        return False
+                else:
+                    console.print("[yellow][!] Gemini nie zwróciło zmian w plikach do aktualizacji.[/yellow]")
+                    return False
+            else:
+                console.print("[yellow][!] Otrzymano pustą odpowiedź lub limit zapytań (429).[/yellow]")
+                return False
+        except Exception as e:
+            console.print(f"[red][!] Wyjątek w pętli naprawczej: {e}[/red]")
+            return False
+
+    console.print("[bold red][!] Osiągnięto maksymalną liczbę prób automatycznej naprawy.[/bold red]")
+    return False
 
 def run_git_status():
     try:
@@ -122,7 +228,7 @@ def run_git_status():
 async def main():
     ensure_valid_cwd()
     console.clear()
-    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (GitHub Actions Sync Mode)[/bold green]"))
+    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (Auto-Loop CI/CD Mode)[/bold green]"))
 
     env = load_env_vars()
     psid = env.get("__Secure-1PSID", "")
@@ -144,8 +250,8 @@ async def main():
 
     console.print("[bold cyan]Dostępne komendy:[/bold cyan]")
     console.print("  [bold green]/prompt <treść>[/bold green]       - Wyślij dowolne zapytanie do Gemini")
-    console.print("  [bold green]/napraw[/bold green]              - Pobierz logi błędów z GitHub Actions i napraw automatycznie")
-    console.print("  [bold green]/napraw <opis błędu>[/bold green] - Napraw na podstawie podanego opisu lub wklejonego błędu")
+    console.print("  [bold green]/napraw[/bold green]              - Pobierz logi, napraw, wyślij i uruchom pętlę monitorującą")
+    console.print("  [bold green]/napraw <opis błędu>[/bold green] - Napraw na podstawie opisu, wyślij i monitoruj w pętli")
     console.print("  [bold green]/git[/bold green]                 - Sprawdź status git, zrób commit i push")
     console.print("  [bold green]/pull[/bold green]                - Pobierz zmiany z GitHub (git pull)")
     console.print("  [bold green]/exit[/bold green]                - Wyjście z programu\n")
@@ -177,13 +283,10 @@ async def main():
             sync_with_github()
 
         elif action == "/napraw":
-            # Rozróżnienie dwóch trybów /napraw:
             if arg:
-                # Tryb 2: Podano opis / błąd bezpośrednio w argumencie
                 issue_desc = arg
-                console.print(f"[cyan][*] Analiza zgłoszonego błędu: {issue_desc}[/cyan]")
+                console.print(f"[cyan][*] Analiza opisu błędu: {issue_desc}[/cyan]")
             else:
-                # Tryb 1: Brak argumentu -> pobieramy logi z GitHub Actions
                 issue_desc = get_github_actions_failed_logs()
                 console.print(Panel(issue_desc[:500] + "..." if len(issue_desc) > 500 else issue_desc, title="Pobrane logi GitHub Actions", border_style="yellow"))
 
@@ -194,18 +297,20 @@ async def main():
                 f"### ścieżka/do/pliku\n```kotlin\n// kod poprawionego pliku\n```"
             )
 
-            console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini...[/cyan]")
+            console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini (zwiększony timeout do 200s)...[/cyan]")
             try:
-                response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=60), timeout=70)
+                response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=200), timeout=220)
                 if response_text:
                     console.print(Markdown(response_text))
                     updated = apply_changes(response_text)
                     if updated:
-                        push_to_github(f"Auto-fix z logów GitHub Actions: {', '.join(updated)}")
+                        pushed = push_to_github(f"Auto-fix z logów CI: {', '.join(updated)}")
+                        if pushed:
+                            await monitor_and_auto_fix(connector)
                 else:
                     console.print("[yellow][!] Otrzymano pustą odpowiedź lub limit zapytań (429).[/yellow]")
             except TimeoutError:
-                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini.[/yellow]")
+                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini (timeout 220s).[/yellow]")
             except Exception as e:
                 console.print(f"[red][!] Błąd komunikacji: {e}[/red]")
 
@@ -215,7 +320,7 @@ async def main():
                 continue
             console.print("[cyan][*] Wysyłanie zapytania do Gemini...[/cyan]")
             try:
-                response_text = await asyncio.wait_for(connector.send_prompt(arg, timeout_sec=60), timeout=70)
+                response_text = await asyncio.wait_for(connector.send_prompt(arg, timeout_sec=200), timeout=220)
                 if response_text:
                     console.print(Markdown(response_text))
                     save_file = console.input("[yellow]Czy zapisać pliki z odpowiedzi (jeśli podano)? (t/n) > [/yellow]").strip().lower()
