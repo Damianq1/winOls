@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.WinOls" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#1A1A1A</item>
-        <item name="colorPrimaryVariant">#000000</item>
-        <item name="colorOnPrimary">#00FF66</item>
-        <item name="android:statusBarColor">#000000</item>
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryVariant">@color/primary_variant</item>
+        <item name="colorOnPrimary">@color/on_primary</item>
+        <item name="android:windowBackground">@color/background_dark</item>
+        <item name="android:statusBarColor">@color/background_dark</item>
     </style>
 </resources>

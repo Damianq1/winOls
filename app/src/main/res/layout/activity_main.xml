@@ -1,21 +1,53 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout 
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212">
+    android:background="@color/background_dark"
+    android:padding="16dp">
 
-    <TextView
-        android:id="@+id/tvStatus"
-        android:layout_width="wrap_content"
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnOpenFile"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="WinOls Mobile - Gotowy do wczytania binarki"
-        android:textColor="#00FF66"
+        android:text="Wczytaj Binarkę ECU"
+        app:layout_constraintEnd_toStartOf="@+id/btnExportFile"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        android:layout_marginEnd="8dp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnExportFile"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Zapisz BIN"
+        android:enabled="false"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toEndOf="@+id/btnOpenFile"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <com.google.android.material.textview.MaterialTextView
+        android:id="@+id/tvFileInfo"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="12sp"
         android:fontFamily="monospace"
+        android:text="Brak załadowanego pliku"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/btnOpenFile" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvHexDump"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginTop="12dp"
+        android:background="@color/surface_dark"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintTop_toBottomOf="@+id/tvFileInfo" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
