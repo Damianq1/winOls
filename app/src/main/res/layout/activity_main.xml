@@ -1,53 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="[http://schemas.android.com/apk/res/android](http://schemas.android.com/apk/res/android)"
+    xmlns:app="[http://schemas.android.com/apk/res-auto](http://schemas.android.com/apk/res-auto)"
+    xmlns:tools="[http://schemas.android.com/tools](http://schemas.android.com/tools)"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background_dark"
-    android:padding="16dp">
+    android:background="#121212">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/topAppBar"
+        android:layout_width="0dp"
+        android:layout_height="?attr/actionBarSize"
+        android:background="#1E1E1E"
+        app:title="WinOls Mobile"
+        app:titleTextColor="#FFFFFF"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <TextView android:fontFamily="monospace" android:id="@+id/tvHexPlaceholder" android:layout_height="wrap_content" android:layout_width="wrap_content" android:text="Brak otwartego pliku binarnego (ECU DUMP)" android:textColor="#757575" android:textSize="14sp" app:layout_constraintBottom_toTopOf="@+id/btnOpenFile" app:layout_constraintEnd_toEndOf="parent" app:layout_constraintStart_toStartOf="parent" app:layout_constraintTop_toBottomOf="@+id/topAppBar"/>
 
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnOpenFile"
-        android:layout_width="0dp"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Wczytaj Binarkę ECU"
-        app:layout_constraintEnd_toStartOf="@+id/btnExportFile"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        android:layout_marginEnd="8dp" />
-
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnExportFile"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:text="Zapisz BIN"
-        android:enabled="false"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toEndOf="@+id/btnOpenFile"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <com.google.android.material.textview.MaterialTextView
-        android:id="@+id/tvFileInfo"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:textColor="@color/text_secondary"
-        android:textSize="12sp"
-        android:fontFamily="monospace"
-        android:text="Brak załadowanego pliku"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/btnOpenFile" />
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvHexDump"
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:layout_marginTop="12dp"
-        android:background="@color/surface_dark"
+        android:layout_marginBottom="32dp"
+        android:text="Wczytaj plik binarnego wsadu"
+        app:cornerRadius="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvFileInfo" />
+        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
