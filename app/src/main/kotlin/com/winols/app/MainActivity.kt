@@ -6,6 +6,6 @@ import androidx.appcompat.app.AppCompatActivity
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Punkt wejściowy aplikacji pod edytor binarny ECU
+        setContentView(R.layout.activity_main)
     }
 }

@@ -1,124 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#121212"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
 
-    <!-- Główny pasek operacyjny -->
-    <HorizontalScrollView
-        android:layout_width="match_parent"
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:background="#1E1E1E"
-        android:padding="6dp">
+        android:text="WinOLS Android ECU Editor"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTopToTopOf="parent" />
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btnLoadBin"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="4dp"
-                android:text="Otwórz BIN" />
-
-            <Button
-                android:id="@+id/btnSelectMap"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="4dp"
-                android:text="Mapa" />
-
-            <Button
-                android:id="@+id/btnToggleViewMode"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="4dp"
-                android:text="Widok: Tabela" />
-
-            <Button
-                android:id="@+id/btnModifyCell"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Edytuj" />
-        </LinearLayout>
-    </HorizontalScrollView>
-
-    <!-- Szybki pasek przełączania reprezentacji danych (WinOLS Toolbar) -->
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="#272727"
-        android:padding="4dp">
-
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <Button
-                android:id="@+id/btnQuickHexDec"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:layout_marginEnd="4dp"
-                android:text="HEX"
-                android:textColor="#FFFFFF" />
-
-            <Button
-                android:id="@+id/btnQuickWidth"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:layout_marginEnd="4dp"
-                android:text="16-Bit"
-                android:textColor="#FFFFFF" />
-
-            <Button
-                android:id="@+id/btnQuickEndian"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:layout_marginEnd="4dp"
-                android:text="Lo/Hi (LE)"
-                android:textColor="#FFFFFF" />
-
-            <Button
-                android:id="@+id/btnQuickFormula"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                android:layout_width="wrap_content"
-                android:layout_height="38dp"
-                android:text="Surowe"
-                android:textColor="#FFFFFF" />
-        </LinearLayout>
-    </HorizontalScrollView>
-
-    <FrameLayout
-        android:id="@+id/viewContainer"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent">
-
-        <com.winols.app.ui.EcuGridView
-            android:id="@+id/ecuGridView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="visible" />
-
-        <com.winols.app.ui.EcuCurve2DView
-            android:id="@+id/ecuCurve2DView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-
-        <com.winols.app.ui.EcuSurface3DView
-            android:id="@+id/ecuSurface3DView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:visibility="gone" />
-    </FrameLayout>
-
-</LinearLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>
