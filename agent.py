@@ -48,6 +48,7 @@ def load_env_vars():
     return env_dict
 
 def apply_changes(response_text):
+    ensure_valid_cwd()
     pattern = re.compile(
         r"(?:###\s*([^\n]+)|(?:#|//)\s*FILE:\s*([^\n]+))\s*\n+```[a-zA-Z]*\n(.*?)\n```",
         re.DOTALL,
@@ -66,6 +67,7 @@ def apply_changes(response_text):
     return updated_files
 
 def sync_with_github():
+    ensure_valid_cwd()
     try:
         console.print("[yellow][*] Synchronizacja z GitHubem (git pull)...[/yellow]")
         res = subprocess.run(["git", "pull", "--rebase"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
@@ -74,6 +76,7 @@ def sync_with_github():
         console.print(f"[yellow][!] Ostrzeżenie przy git pull: {e}[/yellow]")
 
 def push_to_github():
+    ensure_valid_cwd()
     try:
         console.print("[yellow][*] Wysyłanie zmian na GitHub (git push)...[/yellow]")
         res = subprocess.run(["git", "push"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
@@ -85,6 +88,7 @@ def push_to_github():
         console.print(f"[yellow][!] Błąd wysyłania do Gita: {e}[/yellow]")
 
 def run_git_status():
+    ensure_valid_cwd()
     try:
         res = subprocess.run(["git", "status"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
         console.print(Panel(res.stdout, title="Git Status", border_style="cyan"))
@@ -92,6 +96,7 @@ def run_git_status():
         console.print(f"[red]Błąd git status: {e}[/red]")
 
 def run_git_commit_and_push(msg="Manual commit"):
+    ensure_valid_cwd()
     try:
         subprocess.run(["git", "add", "."], cwd=str(PROJECT_PATH), capture_output=True)
         res = subprocess.run(["git", "commit", "-m", msg], cwd=str(PROJECT_PATH), capture_output=True, text=True)
@@ -101,6 +106,7 @@ def run_git_commit_and_push(msg="Manual commit"):
         console.print(f"[red]Błąd commit/push: {e}[/red]")
 
 def run_gradle_build():
+    ensure_valid_cwd()
     console.print("[yellow][*] Uruchamianie kompilacji Gradle (./gradlew assembleDebug)...[/yellow]")
     try:
         res = subprocess.run(
@@ -127,7 +133,6 @@ def run_gradle_build():
         return False, str(e)
 
 async def handle_auto_fix_loop(connector, max_retries=3):
-    """Automatyczna pętla: Build -> Błąd -> Wysyłka do Gemini -> Poprawka -> Powtórka"""
     for attempt in range(1, max_retries + 1):
         console.print(f"\n[bold cyan][*] Próba buildu nr {attempt}/{max_retries}[/bold cyan]")
         success, build_output = run_gradle_build()
@@ -195,13 +200,14 @@ async def main():
 
     console.print("[bold cyan]Dostępne komendy:[/bold cyan]")
     console.print("  [bold green]/prompt <treść>[/bold green] - Wyślij dowolne zapytanie do Gemini")
-    console.print("  [bold green]/napraw[/bold green]        - Uruchom automatyczną pętlę: Build -> Błąd -> Gemini -> Poprawka (pętla)")
+    console.print("  [bold green]/napraw[/bold green]        - Uruchom automatyczną pętlę: Build -> Błąd -> Gemini -> Poprawka")
     console.print("  [bold green]/git[/bold green]           - Sprawdź status git, zrób commit i push")
     console.print("  [bold green]/pull[/bold green]          - Pobierz zmiany z GitHub (git pull)")
     console.print("  [bold green]/exit[/bold green]          - Wyjście z programu\n")
 
     while True:
         try:
+            ensure_valid_cwd()
             cmd_input = console.input("[bold magenta]WinOls-Agent > [/bold magenta]").strip()
         except (KeyboardInterrupt, EOFError):
             break
