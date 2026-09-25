@@ -5,39 +5,41 @@ import java.io.IOException
 
 class GradleRunner(private val projectDir: File) {
 
-    @Throws(IOException::class, InterruptedException::class)
-    fun execute(vararg tasks: String): Int {
+    /**
+     * Uruchamia wrapper Gradle, upewniając się wcześniej,
+     * że plik skryptu posiada prawa do wykonywania (chmod +x / executable).
+     */
+    fun runGradle(vararg tasks: String): Process {
         val isWindows = System.getProperty("os.name").lowercase().contains("windows")
-        val gradlewFileName = if (isWindows) "gradlew.bat" else "gradlew"
-        val gradlewFile = File(projectDir, gradlewFileName)
-
-        if (!gradlewFile.exists()) {
-            throw IOException("Gradle wrapper script not found: ${gradlewFile.absolutePath}")
+        val gradlewScript = if (isWindows) {
+            File(projectDir, "gradlew.bat")
+        } else {
+            File(projectDir, "gradlew")
         }
 
-        // Naprawa błędu [Errno 13] Permission denied:
-        // Na systemach Unix/Linux/Android nadajemy uprawnienia wykonywalności przed uruchomieniem
-        if (!isWindows && !gradlewFile.canExecute()) {
-            val executableSet = gradlewFile.setExecutable(true, false)
-            if (!executableSet) {
-                // Alternatywny fallback przez proces chmod, gdy uprawnienia natywne JVM zawiodą
-                ProcessBuilder("chmod", "+x", gradlewFile.absolutePath)
-                    .directory(projectDir)
-                    .start()
-                    .waitFor()
+        if (!gradlewScript.exists()) {
+            throw IOException("Nie znaleziono skryptu Gradle Wrapper w: ${gradlewScript.absolutePath}")
+        }
+
+        // Naprawa błędu [Errno 13] Permission denied: nadanie uprawnień do uruchomienia
+        if (!isWindows && !gradlewScript.canExecute()) {
+            val success = gradlewScript.setExecutable(true)
+            if (!success) {
+                // Alternatywne wymuszenie przez ProcessBuilder w środowiskach POSIX
+                Runtime.getRuntime().exec(arrayOf("chmod", "+x", gradlewScript.absolutePath)).waitFor()
             }
         }
 
         val command = mutableListOf<String>().apply {
-            add(gradlewFile.absolutePath)
+            add(gradlewScript.absolutePath)
             addAll(tasks)
         }
 
-        val process = ProcessBuilder(command)
-            .directory(projectDir)
-            .redirectErrorStream(true)
-            .start()
+        val processBuilder = ProcessBuilder(command).apply {
+            directory(projectDir)
+            redirectErrorStream(true)
+        }
 
-        return process.waitFor()
+        return processBuilder.start()
     }
 }
