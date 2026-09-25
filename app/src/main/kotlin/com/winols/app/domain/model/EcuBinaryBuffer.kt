@@ -1,33 +1,52 @@
 package com.winols.app.domain.model
 
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+/**
+ * Reprezentuje bufor binarny ECU z obsługą endianowości i odczytu typów stosowanych w mapach (8-bit, 16-bit, 32-bit).
+ */
 class EcuBinaryBuffer(val rawBytes: ByteArray) {
+
     val size: Int get() = rawBytes.size
+    private val buffer: ByteBuffer = ByteBuffer.wrap(rawBytes)
 
-    fun readByte(offset: Int): UByte {
-        require(offset in 0 until size) { "Przekroczono zakres bufora ECU." }
-        return rawBytes[offset].toUByte()
+    fun readU8(offset: Int): Int {
+        return rawBytes[offset].toInt() and 0xFF
     }
 
-    fun readWord16(offset: Int, littleEndian: Boolean = false): UShort {
-        val b0 = readByte(offset).toInt()
-        val b1 = readByte(offset + 1).toInt()
-        return if (littleEndian) {
-            ((b1 shl 8) or b0).toUShort()
-        } else {
-            ((b0 shl 8) or b1).toUShort()
+    fun readU16(offset: Int, endian: ByteOrder = ByteOrder.BIG_ENDIAN): Int {
+        buffer.order(endian)
+        return buffer.getShort(offset).toInt() and 0xFFFF
+    }
+
+    fun read32(offset: Int, endian: ByteOrder = ByteOrder.BIG_ENDIAN): Long {
+        buffer.order(endian)
+        return buffer.getInt(offset).toLong() and 0xFFFFFFFFL
+    }
+
+    fun getHexDumpPreview(maxBytes: Int = 512): String {
+        val limit = minOf(rawBytes.size, maxBytes)
+        val sb = StringBuilder()
+
+        for (i in 0 until limit step 16) {
+            sb.append(String.format("%06X: ", i))
+            val lineBytes = minOf(16, limit - i)
+
+            for (j in 0 until lineBytes) {
+                sb.append(String.format("%02X ", rawBytes[i + j]))
+            }
+            for (j in lineBytes until 16) {
+                sb.append("   ")
+            }
+            sb.append(" |")
+            for (j in 0 until lineBytes) {
+                val b = rawBytes[i + j].toInt() and 0xFF
+                val ch = if (b in 32..126) b.toChar() else '.'
+                sb.append(ch)
+            }
+            sb.append("|\n")
         }
-    }
-
-    fun getChunk(offset: Int, length: Int): ByteArray {
-        val actualLength = minOf(length, size - offset)
-        return rawBytes.copyOfRange(offset, offset + actualLength)
-    }
-
-    fun calculateChecksum32(): Long {
-        var sum = 0L
-        for (b in rawBytes) {
-            sum = (sum + (b.toInt() and 0xFF)) and 0xFFFFFFFFL
-        }
-        return sum
+        return sb.toString()
     }
 }

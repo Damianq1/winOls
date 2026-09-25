@@ -1,4 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">WinOls Mobile AI</string>
+    <string name="load_binary">Wczytaj plik BIN</string>
+    <string name="no_file_loaded">Brak załadowanego pliku binarki ECU</string>
+    <string name="hex_view_header">Adres | Hex Dump | ASCII</string>
 </resources>
