@@ -42,6 +42,7 @@ def load_env_vars():
     return env_dict
 
 def apply_changes(response_text):
+    ensure_valid_cwd()
     pattern = re.compile(
         r"(?:###\s*([^\n]+)|(?:#|//)\s*FILE:\s*([^\n]+))\s*\n+```[a-zA-Z]*\n(.*?)\n```",
         re.DOTALL,
@@ -57,9 +58,24 @@ def apply_changes(response_text):
             target.write_text(body, encoding="utf-8")
             console.print(f"[bold green][+] Zaktualizowano plik: {path_str}[/bold green]")
             updated_files.append(path_str)
+            
+    # Autonomiczne sprzątanie zbędnych plików workflow, jeśli Gemini wspomina o nadmiarowych plikях
+    workflows_dir = PROJECT_PATH / ".github" / "workflows"
+    if workflows_dir.exists():
+        allowed_workflow = "android.yml"
+        for wf_file in workflows_dir.iterdir():
+            if wf_file.is_file() and wf_file.name != allowed_workflow:
+                try:
+                    wf_file.unlink()
+                    console.print(f"[bold yellow][!] Autonomicznie usunięto zbędny plik workflow: .github/workflows/{wf_file.name}[/bold yellow]")
+                    subprocess.run(["git", "rm", "-f", str(wf_file.relative_to(PROJECT_PATH))], cwd=str(PROJECT_PATH), capture_output=True)
+                except Exception as e:
+                    console.print(f"[dim]Nie udało się usunąć {wf_file.name}: {e}[/dim]")
+                    
     return updated_files
 
 def sync_with_github():
+    ensure_valid_cwd()
     try:
         console.print("[yellow][*] Synchronizacja z GitHubem (git pull)...[/yellow]")
         res = subprocess.run(["git", "pull", "--rebase"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
@@ -68,6 +84,7 @@ def sync_with_github():
         console.print(f"[yellow][!] Ostrzeżenie przy git pull: {e}[/yellow]")
 
 def push_to_github(msg="Auto-fix / Update code"):
+    ensure_valid_cwd()
     try:
         console.print("[yellow][*] Dodawanie zmian do Gita (git add)...[/yellow]")
         subprocess.run(["git", "add", "."], cwd=str(PROJECT_PATH), capture_output=True)
@@ -92,6 +109,7 @@ def push_to_github(msg="Auto-fix / Update code"):
         return False
 
 def get_github_actions_failed_logs():
+    ensure_valid_cwd()
     """Pobiera logi z GitHub Actions, odrzuca nagłówki środowiskowe i wyciąga faktyczne błędy."""
     console.print("[yellow][*] Pobieranie i filtrowanie logów z GitHub Actions...[/yellow]")
     try:
@@ -148,6 +166,7 @@ def get_github_actions_failed_logs():
         return f"[!] Nie udało się pobrać logów przez GitHub CLI: {e}"
 
 def check_latest_workflow_status():
+    ensure_valid_cwd()
     try:
         res = subprocess.run(
             ["gh", "run", "list", "--limit", "1", "--json", "status,conclusion"],
@@ -190,11 +209,12 @@ async def monitor_and_auto_fix(connector, max_attempts=3, check_interval_sec=120
         prompt = (
             f"Projekt: WinOls (Android ECU Binary Editor)\n"
             f"Automatyczna pętla naprawcza (Próba {attempt}/{max_attempts}). Wykryto błąd w GitHub Actions:\n{issue_desc}\n\n"
-            f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą. Znajdź błąd w kodzie, popraw go i zwróć zmianę w formacie:\n"
-            f"### ścieżka/do/pliku\n```kotlin\n// kod poprawionego pliku\n```"
+            f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą działającym w Termuxie. Masz pełną autonomię do modyfikowania i usuwania plików. "
+            f"Jeśli widzisz nadmiarowe pliki workflow w .github/workflows/, usuń je w odpowiedzi lub pozostaw tylko android.yml. "
+            f"Zwróć zmodyfikowane pliki w formacie:\n### ścieżka/do/pliku\n```kotlin\n// kod\n```"
         )
 
-        console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini (zwiększony timeout)...[/cyan]")
+        console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini...[/cyan]")
         try:
             response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=200), timeout=220)
             if response_text:
@@ -219,6 +239,7 @@ async def monitor_and_auto_fix(connector, max_attempts=3, check_interval_sec=120
     return False
 
 def run_git_status():
+    ensure_valid_cwd()
     try:
         res = subprocess.run(["git", "status"], cwd=str(PROJECT_PATH), capture_output=True, text=True)
         console.print(Panel(res.stdout, title="Git Status", border_style="cyan"))
@@ -228,7 +249,7 @@ def run_git_status():
 async def main():
     ensure_valid_cwd()
     console.clear()
-    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (Auto-Loop CI/CD Mode)[/bold green]"))
+    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (Autonomous Mode)[/bold green]"))
 
     env = load_env_vars()
     psid = env.get("__Secure-1PSID", "")
@@ -250,8 +271,7 @@ async def main():
 
     console.print("[bold cyan]Dostępne komendy:[/bold cyan]")
     console.print("  [bold green]/prompt <treść>[/bold green]       - Wyślij dowolne zapytanie do Gemini")
-    console.print("  [bold green]/napraw[/bold green]              - Pobierz logi, napraw, wyślij i uruchom pętlę monitorującą")
-    console.print("  [bold green]/napraw <opis błędu>[/bold green] - Napraw na podstawie opisu, wyślij i monitoruj w pętli")
+    console.print("  [bold green]/napraw[/bold green]              - Pobierz logi, napraw pliki, posprzątaj, wyślij i monitoruj")
     console.print("  [bold green]/git[/bold green]                 - Sprawdź status git, zrób commit i push")
     console.print("  [bold green]/pull[/bold green]                - Pobierz zmiany z GitHub (git pull)")
     console.print("  [bold green]/exit[/bold green]                - Wyjście z programu\n")
@@ -285,32 +305,36 @@ async def main():
         elif action == "/napraw":
             if arg:
                 issue_desc = arg
-                console.print(f"[cyan][*] Analiza opisu błędu: {issue_desc}[/cyan]")
+                console.print(f"[cyan][*] Instrukcja użytkownika: {issue_desc}[/cyan]")
             else:
                 issue_desc = get_github_actions_failed_logs()
                 console.print(Panel(issue_desc[:500] + "..." if len(issue_desc) > 500 else issue_desc, title="Pobrane logi GitHub Actions", border_style="yellow"))
 
             prompt = (
                 f"Projekt: WinOls (Android ECU Binary Editor)\n"
-                f"Błąd / Logi z GitHub Actions:\n{issue_desc}\n\n"
-                f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą. Znajdź błąd w kodzie, popraw go i zwróć zmianę w formacie:\n"
-                f"### ścieżka/do/pliku\n```kotlin\n// kod poprawionego pliku\n```"
+                f"Zadanie / Błąd od użytkownika lub CI:\n{issue_desc}\n\n"
+                f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą w Termuxie. Masz pełne uprawnienia do modyfikowania i zarządzania plikami w projekcie. "
+                f"Jeżeli polecenie dotyczy usuwania nadmiarowych plików (np. w .github/workflows), upewnij się, że w odpowiedzi zaktualizujesz wymagany plik (np. android.yml), "
+                f"a skrypt agenta automatycznie posprząta resztę. "
+                f"Zwróć odpowiedź zawierającą blok kodu dla pliku w formacie:\n### ścieżka/do/pliku\n```yaml\n# zawartość\n```"
             )
 
-            console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini (zwiększony timeout do 200s)...[/cyan]")
+            console.print("[cyan][*] Wysyłanie polecenia do Gemini...[/cyan]")
             try:
                 response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=200), timeout=220)
                 if response_text:
                     console.print(Markdown(response_text))
                     updated = apply_changes(response_text)
                     if updated:
-                        pushed = push_to_github(f"Auto-fix z logów CI: {', '.join(updated)}")
+                        pushed = push_to_github(f"Auto-fix / Maintenance: {', '.join(updated)}")
                         if pushed:
                             await monitor_and_auto_fix(connector)
+                    else:
+                        console.print("[yellow][!] Gemini nie zwróciło zmian w plikach do zapisania.[/yellow]")
                 else:
                     console.print("[yellow][!] Otrzymano pustą odpowiedź lub limit zapytań (429).[/yellow]")
             except TimeoutError:
-                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini (timeout 220s).[/yellow]")
+                console.print("[yellow][!] Przekroczono czas oczekiwania na odpowiedź od Gemini.[/yellow]")
             except Exception as e:
                 console.print(f"[red][!] Błąd komunikacji: {e}[/red]")
 
@@ -323,11 +347,9 @@ async def main():
                 response_text = await asyncio.wait_for(connector.send_prompt(arg, timeout_sec=200), timeout=220)
                 if response_text:
                     console.print(Markdown(response_text))
-                    save_file = console.input("[yellow]Czy zapisać pliki z odpowiedzi (jeśli podano)? (t/n) > [/yellow]").strip().lower()
-                    if save_file == 't':
-                        updated = apply_changes(response_text)
-                        if updated:
-                            push_to_github(f"Applied changes from prompt")
+                    updated = apply_changes(response_text)
+                    if updated:
+                        push_to_github(f"Applied changes from prompt")
                 else:
                     console.print("[yellow][!] Otrzymano pustą odpowiedź lub limit zapytań (429).[/yellow]")
             except TimeoutError:

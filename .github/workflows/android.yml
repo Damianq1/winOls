@@ -1,20 +1,34 @@
-name: Android CI/CD
+name: WinOLS Android CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
+      - 'release/**'
+    tags:
+      - 'v*'
   pull_request:
-    branches: [ "main", "master" ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build:
-    name: Build & Verify APK
+  build-and-test:
+    name: Build, Test & Package
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -23,18 +37,54 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Grant execute permission for gradlew
+      - name: Grant Execute Permission for Gradle Wrapper
         run: chmod +x gradlew
 
-      - name: Run Unit Tests & Lint
-        run: ./gradlew test lintDebug --stacktrace
+      - name: Code Quality & Lint Checks
+        run: ./gradlew lintDebug --continue --stacktrace
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --continue --stacktrace
+
+      - name: Upload Test & Lint Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-reports
+          path: |
+            **/build/reports/lint-results*.html
+            **/build/reports/tests/**
+          retention-days: 7
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload Debug APK Artifact
+      - name: Build Release APK & Bundle
+        run: ./gradlew assembleRelease bundleRelease --stacktrace
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
+          name: winols-debug-apk
+          path: '**/build/outputs/apk/debug/*.apk'
+          retention-days: 14
+
+      - name: Upload Release Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: winols-release-binaries
+          path: |
+            **/build/outputs/apk/release/*.apk
+            **/build/outputs/bundle/release/*.aab
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            **/build/outputs/apk/release/*.apk
+            **/build/outputs/bundle/release/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
