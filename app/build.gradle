@@ -17,7 +17,9 @@ android {
     }
 
     buildTypes {
-        debug { applicationIdSuffix '.debug' }
+        debug { 
+            applicationIdSuffix '.debug' 
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
@@ -28,9 +30,17 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = '17' }
-    buildFeatures { viewBinding true }
-    packaging { resources { excludes += ['/META-INF/{AL2.0,LGPL2.1}'] } }
+    kotlinOptions { 
+        jvmTarget = '17' 
+    }
+    buildFeatures { 
+        viewBinding true 
+    }
+    packaging { 
+        resources { 
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}'] 
+        } 
+    }
 }
 
 dependencies {
@@ -41,6 +51,8 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.7'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+
+    // Testy jednostkowe operacji na buforach
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'

@@ -1,0 +1,8 @@
+# 1. Usuń zdublowane pliki Kotlin DSL
+rm -f build.gradle.kts settings.gradle.kts app/build.gradle.kts
+
+# 2. Usuń błędnie nazwany katalog z root'a
+rm -rf "Proponowana Architektura Kodu (Clean Architecture + MVI/"
+
+# 3. Usuń osierocony katalog src w katalogu głównym
+rm -rf src/
