@@ -229,17 +229,18 @@ async def monitor_and_auto_fix(connector, max_attempts=3, check_interval_sec=120
             await asyncio.sleep(check_interval_sec)
             elapsed += check_interval_sec
 
+        snapshot = get_project_snapshot()
         issue_desc = get_github_actions_failed_logs()
         
         prompt = (
             f"Projekt: WinOls (Android ECU Binary Editor)\n"
-            f"Błąd CI w GitHub Actions:\n{issue_desc}\n\n"
-            f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą w Termuxie. "
-            f"Korzystając z zapamiętanej struktury projektu, przeanalizuj problem, popraw błąd i zwróć pliki w formacie:\n"
+            f"{snapshot}\n"
+            f"Błąd CI:\n{issue_desc}\n\n"
+            f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą w Termuxie. Przeanalizuj strukturę i pliki, popraw błąd i zwróć pliki w formacie:\n"
             f"### ścieżka/do/pliku\n```kotlin lub yaml\n// kod\n```"
         )
 
-        console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini (korzystam z pamięci sesji)...[/cyan]")
+        console.print("[cyan][*] Wysyłanie zapytania naprawczego z pełnym kontekstem projektu do Gemini...[/cyan]")
         try:
             response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=280), timeout=300)
             if response_text:
@@ -269,7 +270,7 @@ def run_git_status():
 async def main():
     ensure_valid_cwd()
     console.clear()
-    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (Gem-like Session Memory)[/bold green]"))
+    console.print(Panel.fit("[bold green]WinOls Interactive Agent Console (Fixed Multiline & Extended Timeout)[/bold green]"))
 
     env = load_env_vars()
     psid = env.get("__Secure-1PSID", "")
@@ -289,29 +290,9 @@ async def main():
         console.print(f"[bold red][!] Wyjątek podczas inicjalizacji: {e}[/bold red]")
         return
 
-    # Inicjalizacja kontekstu projektu jako pierwsza wiadomość w sesji (pamięć Gema)
-    console.print("[cyan][*] Ładowanie struktury projektu do pamięci sesji Gemini...[/cyan]")
-    try:
-        initial_snapshot = get_project_snapshot()
-        init_prompt = (
-            f"Projekt: WinOls (Android ECU Binary Editor)\n"
-            f"Oto początkowa struktura projektu i pliki kluczowe:\n{initial_snapshot}\n"
-            f"ZASADA: Zapamiętaj tę strukturę oraz pliki. Będziemy pracować nad tym projektem w bieżącej sesji. "
-            f"Odpowiedz krótko, że zapisałeś strukturę i oczekujesz na zadania."
-        )
-        init_response = await connector.send_prompt(init_prompt, timeout_sec=280)
-        if init_response:
-            console.print(Markdown(init_response))
-            console.print("[bold green][✓] Kontekst projektu został pomyślnie załadowany do pamięci sesji![/bold green]")
-        else:
-            console.print("[yellow][!] Otrzymano pustą odpowiedź inicjalizacyjną, ale kontynuujemy...[/yellow]")
-    except Exception as e:
-        console.print(f"[yellow][!] Ostrzeżenie przy ładowaniu kontekstu: {e}[/yellow]")
-
-    console.print("\n[bold cyan]Dostępne komendy:[/bold cyan]")
-    console.print("  [bold green]/prompt <treść>[/bold green]       - Wyślij zapytanie (korzysta z pamięci sesji)")
-    console.print("  [bold green]/napraw [opcjonalnie][/bold green]  - Pobierz logi, napraw błąd i monitoruj")
-    console.print("  [bold green]/refresh[/bold green]             - Odśwież strukturę projektu w pamięci Gemini")
+    console.print("[bold cyan]Dostępne komendy:[/bold cyan]")
+    console.print("  [bold green]/prompt <treść>[/bold green]       - Wyślij zapytanie wraz z snapshotem folderu")
+    console.print("  [bold green]/napraw [opcjonalnie][/bold green]  - Pobierz logi, dołącz snapshot, napraw i monitoruj")
     console.print("  [bold green]/git[/bold green]                 - Sprawdź status git")
     console.print("  [bold green]/pull[/bold green]                - Pobierz zmiany z GitHub")
     console.print("  [bold green]/exit[/bold green]                - Wyjście\n")
@@ -325,6 +306,8 @@ async def main():
         if not cmd_input:
             continue
 
+        # Obsługa wielolinijkowego /prompt: jeśli użytkownik wkleił blok tekstowy zaczynający się od /prompt, bierzemy wszystko.
+        # Jeśli nie wpisał /prompt na początku, ale wkleił długi tekst bez "/" na początku, traktujemy to automatycznie jako /prompt!
         if cmd_input.startswith("/prompt "):
             action = "/prompt"
             arg = cmd_input[8:].strip()
@@ -333,6 +316,7 @@ async def main():
             action = parts[0].lower()
             arg = parts[1] if len(parts) > 1 else ""
         else:
+            # Automatyczne przekierowanie wklejonego tekstu bez komendy jako /prompt
             action = "/prompt"
             arg = cmd_input
 
@@ -349,28 +333,19 @@ async def main():
         elif action == "/pull":
             sync_with_github()
 
-        elif action == "/refresh":
-            console.print("[cyan][*] Odświeżanie kontekstu projektu w pamięci Gemini...[/cyan]")
-            try:
-                ref_snapshot = get_project_snapshot()
-                ref_prompt = f"Aktualizacja struktury i plików projektu WinOls:\n{ref_snapshot}\nZapamiętaj te aktualne pliki."
-                resp = await connector.send_prompt(ref_prompt, timeout_sec=280)
-                if resp:
-                    console.print(Markdown(resp))
-                    console.print("[bold green][✓] Kontekst projektu został zaktualizowany w pamięci sesji![/bold green]")
-            except Exception as e:
-                console.print(f"[red][!] Błąd odświeżania: {e}[/red]")
-
         elif action == "/napraw":
             issue_desc = arg if arg else get_github_actions_failed_logs()
+            snapshot = get_project_snapshot()
 
             prompt = (
-                f"Zadanie naprawcze / Błąd w projekcie WinOls:\n{issue_desc}\n\n"
-                f"ZASADA BEZWZGLĘDNA: Korzystając z zapamiętanej struktury projektu, przeanalizuj problem, "
-                f"dokonaj poprawek i zwróć pliki w formacie:\n### ścieżka/do/pliku\n```kotlin\n// kod\n```"
+                f"Projekt: WinOls (Android ECU Binary Editor)\n"
+                f"{snapshot}\n"
+                f"Zadanie / Błąd:\n{issue_desc}\n\n"
+                f"ZASADA BEZWZGLĘDNA: Jesteś autonomicznym programistą w Termuxie. Masz pełną strukturę projektu powyżej. "
+                f"Przeanalizuj pliki, dokonaj poprawek i zwróć je w formacie:\n### ścieżka/do/pliku\n```kotlin\n// kod\n```"
             )
 
-            console.print("[cyan][*] Wysyłanie zapytania naprawczego do Gemini...[/cyan]")
+            console.print("[cyan][*] Skanowanie projektu i wysyłanie zapytania do Gemini (timeout do 300s)...[/cyan]")
             try:
                 response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=280), timeout=300)
                 if response_text:
@@ -394,13 +369,16 @@ async def main():
                 console.print("[red]Podaj treść zapytania po /prompt[/red]")
                 continue
                 
+            snapshot = get_project_snapshot()
             prompt = (
-                f"Zapytanie dotyczące projektu WinOls:\n{arg}\n\n"
-                f"ZASADA BEZWZGLĘDNA: Korzystaj z zapamiętanej struktury projektu. Odpowiedz merytorycznie. "
+                f"Projekt: WinOls (Android ECU Binary Editor)\n"
+                f"{snapshot}\n"
+                f"Zapytanie użytkownika:\n{arg}\n\n"
+                f"ZASADA BEZWZGLĘDNA: Przeanalizuj strukturę projektu i pliki powyżej. Odpowiedz merytorycznie. "
                 f"Jeśli modyfikujesz pliki, zwróć je w formacie:\n### ścieżka/do/pliku\n```kotlin lub yaml\n// kod\n```"
             )
 
-            console.print("[cyan][*] Wysyłanie zapytania do Gemini (sesja aktywna)...[/cyan]")
+            console.print("[cyan][*] Skanowanie folderu i wysyłanie do Gemini z pełnym kontekstem (timeout do 300s)...[/cyan]")
             try:
                 response_text = await asyncio.wait_for(connector.send_prompt(prompt, timeout_sec=280), timeout=300)
                 if response_text:
@@ -416,7 +394,7 @@ async def main():
                 console.print(f"[red][!] Błąd komunikacji: {e}[/red]")
 
         else:
-            console.print(f"[red]Nieznana komenda: {action}. Użyj /prompt, /napraw, /refresh, /git, /pull lub /exit[/red]")
+            console.print(f"[red]Nieznana komenda: {action}. Użyj /prompt, /napraw, /git, /pull lub /exit[/red]")
 
     try:
         await connector.close()

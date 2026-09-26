@@ -1,45 +1,33 @@
 package com.winols.app
 
 import android.app.Application
-import java.io.File
+import com.winols.BuildConfig
+import timber.log.Timber
 
-/**
- * Punkt wejścia aplikacji Android konfigurujący środowisko pracy,
- * cache pamięci podręcznej i dostęp do instancji modelu w czasie działania aplikacji.
- */
 class WinOlsApplication : Application() {
-
-    var currentSession: ProjectSession? = null
-        private set
 
     override fun onCreate() {
         super.onCreate()
-        instance = this
+
+        initLogging()
     }
 
-    fun openProject(file: File): ProjectSession {
-        val model = BinModel.fromFile(file)
-        model.initializeProject()
-
-        val session = ProjectSession(
-            id = file.name,
-            binModel = model,
-            originalSnapshot = model.bufferManager.getByteArray()
-        )
-        currentSession = session
-        return session
+    private fun initLogging() {
+        if (BuildConfig.DEBUG) {
+            Timber.plant(Timber.DebugTree())
+        } else {
+            Timber.plant(ReleaseTree())
+        }
+        Timber.i("WinOlsApplication zainicjalizowana pomyślnie.")
     }
 
-    fun closeProject() {
-        currentSession = null
-    }
-
-    private fun BinModel.initializeProject() {
-        this.scanAndRegisterMaps()
-    }
-
-    companion object {
-        lateinit var instance: WinOlsApplication
-            private set
+    private class ReleaseTree : Timber.Tree() {
+        override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+            // W środowisku produkcyjnym odfiltrowujemy verbose i debug
+            if (priority == android.util.Log.VERBOSE || priority == android.util.Log.DEBUG) {
+                return
+            }
+            // Miejsce na integrację z Crashlytics/zewnętrznym serwisem błędów
+        }
     }
 }
